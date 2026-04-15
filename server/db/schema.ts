@@ -14,7 +14,7 @@ export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
   agentId: text("agent_id").notNull().references(() => agents.id),
   type: text("type").notNull(),
-  status: text("status").notNull().default("pending"), // pending, running, completed, failed
+  status: text("status").notNull().default("pending"),
   input: text("input", { mode: "json" }),
   output: text("output", { mode: "json" }),
   parentId: text("parent_id"),
@@ -41,7 +41,7 @@ export const conversations = sqliteTable("conversations", {
 export const messages = sqliteTable("messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   conversationId: text("conversation_id").notNull().references(() => conversations.id),
-  role: text("role").notNull(), // user, assistant
+  role: text("role").notNull(),
   content: text("content").notNull(),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
@@ -52,8 +52,35 @@ export const accounts = sqliteTable("accounts", {
   company: text("company").notNull(),
   email: text("email"),
   avatar: text("avatar"),
+  logo: text("logo"),
   platform: text("platform"),
+  industry: text("industry"),
+  website: text("website"),
+  description: text("description"),
+  brandVoice: text("brand_voice"),
+  targetAudience: text("target_audience"),
+  brandColors: text("brand_colors", { mode: "json" }),
+  socialHandles: text("social_handles", { mode: "json" }),
+  servicesSubscribed: text("services_subscribed", { mode: "json" }),
+  contractStart: text("contract_start"),
+  contractEnd: text("contract_end"),
+  monthlyRetainer: text("monthly_retainer"),
+  status: text("status").notNull().default("active"),
+  notes: text("notes"),
   metadata: text("metadata", { mode: "json" }),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const contacts = sqliteTable("contacts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  accountId: integer("account_id").notNull().references(() => accounts.id),
+  name: text("name").notNull(),
+  title: text("title"),
+  email: text("email"),
+  phone: text("phone"),
+  isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false),
+  notes: text("notes"),
+  avatar: text("avatar"),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 

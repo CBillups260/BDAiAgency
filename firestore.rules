@@ -1,0 +1,146 @@
+rules_version = '2';
+
+// Roles are stored at team_members/{auth.uid} with field: role = "admin" | "team_member"
+// Bootstrap: create the first admin doc in Firebase Console or run: npm run team:add -- <uid> admin
+// (Requires GOOGLE_APPLICATION_CREDENTIALS or gcloud application-default credentials.)
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function memberDocPath() {
+      return /databases/$(database)/documents/team_members/$(request.auth.uid);
+    }
+
+    function hasMemberProfile() {
+      return signedIn() && exists(memberDocPath());
+    }
+
+    function memberRole() {
+      return get(memberDocPath()).data.role;
+    }
+
+    // Profiles synced from the client may omit role; treat that like team_member.
+    function effectiveMemberRole() {
+      return hasMemberProfile() && !('role' in get(memberDocPath()).data)
+        ? 'team_member'
+        : memberRole();
+    }
+
+    function hasAppAccess() {
+      return hasMemberProfile() && effectiveMemberRole() in ['admin', 'team_member'];
+    }
+
+    function isAdmin() {
+      return hasMemberProfile() && memberRole() == 'admin';
+    }
+
+    // Roster: any signed-in user with app access can read all team_members (handoff assignee picker, etc.).
+    // Self-read still allowed for edge cases before profile exists.
+    function canReadTeamMember(userId) {
+      return signedIn() && (request.auth.uid == userId || hasAppAccess());
+    }
+
+    match /team_members/{userId} {
+      allow read: if canReadTeamMember(userId);
+
+      // Admins manage anyone; users may create their own row (bootstrap / sync).
+      allow create: if signedIn() && request.auth.uid == userId
+        && request.resource.data.uid == userId
+        && (!('role' in request.resource.data) || request.resource.data.role == 'team_member');
+
+      // Admins manage anyone; users may update only their own doc and cannot change role.
+      // uid must match document id (not resource.data.uid): console bootstrap docs often only have { role }.
+      allow update: if isAdmin()
+        || (signedIn() && request.auth.uid == userId
+            && request.resource.data.uid == userId
+            && request.resource.data.role == resource.data.role);
+
+      allow delete: if isAdmin();
+    }
+
+    match /business_settings/{settingsId} {
+      allow read: if hasAppAccess();
+      allow write: if isAdmin();
+    }
+
+    match /financial_goals/{goalId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /expenses/{expenseId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /gmail_tokens/{tokenId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /accounts/{accountId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /contacts/{contactId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /agents/{agentId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /tasks/{taskId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /activity_log/{logId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /conversations/{convId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /messages/{msgId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /services_catalog/{serviceId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /menu_items/{itemId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /media_assets/{assetId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /prospects/{prospectId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /email_sequences/{seqId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /prospecting_search_cache/{cacheId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /prospecting_enrichment_cache/{cacheId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /territory_state/{stateId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /schedule_handoffs/{handoffId} {
+      allow read, write: if hasAppAccess();
+    }
+  }
+}

@@ -1,0 +1,41 @@
+rules_version = '2';
+
+// Requires Blaze + cross-service rules. Evaluates team_members/{uid} in Firestore (default database).
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function appUser() {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/team_members/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/team_members/$(request.auth.uid)).data.role in ['admin', 'team_member'];
+    }
+
+    match /logos/{allPaths=**} {
+      allow read: if true;
+      allow write: if appUser();
+    }
+
+    match /assets/{allPaths=**} {
+      allow read: if appUser();
+      allow write: if appUser();
+    }
+
+    // GHL scheduler uploads: any signed-in user (not only team_members) so previews don’t fail instantly.
+    // Public read so HighLevel can fetch media by download URL when posting.
+    match /flow-bucket/scheduler/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /flow-bucket/{allPaths=**} {
+      allow read: if appUser();
+      allow write: if appUser();
+    }
+
+    match /schedule_handoffs/{allPaths=**} {
+      allow read: if appUser();
+      allow write: if appUser();
+    }
+  }
+}

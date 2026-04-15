@@ -139,28 +139,167 @@ export function useChat(agentId: string) {
 }
 
 // ─── Accounts ─────────────────────────────────────────────
+export interface SocialHandles {
+  instagram?: string;
+  twitter?: string;
+  linkedin?: string;
+  tiktok?: string;
+  facebook?: string;
+  youtube?: string;
+}
+
 export interface Account {
   id: number;
   name: string;
   company: string;
   email: string | null;
   avatar: string | null;
+  logo: string | null;
   platform: string | null;
+  industry: string | null;
+  website: string | null;
+  description: string | null;
+  brandVoice: string | null;
+  targetAudience: string | null;
+  brandColors: string[] | null;
+  socialHandles: SocialHandles | null;
+  servicesSubscribed: string[] | null;
+  contractStart: string | null;
+  contractEnd: string | null;
+  monthlyRetainer: string | null;
+  status: string;
+  notes: string | null;
   metadata: Record<string, unknown> | null;
+  createdAt?: string;
+}
+
+export interface Contact {
+  id: number;
+  accountId: number;
+  name: string;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  isPrimary: boolean;
+  notes: string | null;
+  avatar: string | null;
+  createdAt?: string;
+}
+
+export interface AccountWithContacts extends Account {
+  contacts: Contact[];
 }
 
 export function useAccounts() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    apiFetch<Account[]>('/accounts')
-      .then(setAccounts)
-      .catch(console.error)
-      .finally(() => setLoading(false));
+  const fetchAccounts = useCallback(async () => {
+    try {
+      const data = await apiFetch<Account[]>('/accounts');
+      setAccounts(data);
+    } catch (e) {
+      console.error('Failed to fetch accounts:', e);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  return { accounts, loading };
+  useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
+
+  return { accounts, loading, refetch: fetchAccounts };
+}
+
+export function useAccount(id: number | null) {
+  const [account, setAccount] = useState<AccountWithContacts | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchAccount = useCallback(async () => {
+    if (!id) { setAccount(null); return; }
+    setLoading(true);
+    try {
+      const data = await apiFetch<AccountWithContacts>(`/accounts/${id}`);
+      setAccount(data);
+    } catch (e) {
+      console.error('Failed to fetch account:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => { fetchAccount(); }, [fetchAccount]);
+
+  return { account, loading, refetch: fetchAccount };
+}
+
+export function useAccountMutations() {
+  const createAccount = useCallback(async (data: Partial<Account>) => {
+    return apiFetch<Account>('/accounts', { method: 'POST', body: JSON.stringify(data) });
+  }, []);
+
+  const updateAccount = useCallback(async (id: number, data: Partial<Account>) => {
+    return apiFetch<Account>(`/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+  }, []);
+
+  const deleteAccount = useCallback(async (id: number) => {
+    return apiFetch<{ ok: boolean }>(`/accounts/${id}`, { method: 'DELETE' });
+  }, []);
+
+  const createContact = useCallback(async (accountId: number, data: Partial<Contact>) => {
+    return apiFetch<Contact>(`/accounts/${accountId}/contacts`, { method: 'POST', body: JSON.stringify(data) });
+  }, []);
+
+  const updateContact = useCallback(async (accountId: number, contactId: number, data: Partial<Contact>) => {
+    return apiFetch<Contact>(`/accounts/${accountId}/contacts/${contactId}`, { method: 'PATCH', body: JSON.stringify(data) });
+  }, []);
+
+  const deleteContact = useCallback(async (accountId: number, contactId: number) => {
+    return apiFetch<{ ok: boolean }>(`/accounts/${accountId}/contacts/${contactId}`, { method: 'DELETE' });
+  }, []);
+
+  return { createAccount, updateAccount, deleteAccount, createContact, updateContact, deleteContact };
+}
+
+// ─── Caption Generation ──────────────────────────────────
+export interface CaptionRequest {
+  accountId: number;
+  platform: string;
+  topic: string;
+  style: string;
+  includeHashtags: boolean;
+  includeEmojis: boolean;
+  captionLength: string;
+}
+
+export interface CaptionResponse {
+  captions: string[];
+  platform: string;
+  charLimit: number;
+  account: { id: number; company: string; avatar: string | null };
+}
+
+export function useGenerateCaption() {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<CaptionResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const generate = useCallback(async (req: CaptionRequest) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await apiFetch<CaptionResponse>('/content/generate-caption', {
+        method: 'POST',
+        body: JSON.stringify(req),
+      });
+      setResult(data);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return { generate, result, loading, error };
 }
 
 // ─── Services ─────────────────────────────────────────────
@@ -225,4 +364,203 @@ export function useTaskUpdates() {
   }, []);
 
   return currentTasks;
+}
+
+// ─── Prospecting ─────────────────────────────────────────
+
+export function useProspecting() {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const searchBusiness = useCallback(
+    async (businessName: string, location?: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await apiFetch<{ results: any[] }>("/prospecting/search", {
+          method: "POST",
+          body: JSON.stringify({ businessName, location }),
+        });
+        return data.results;
+      } catch (err: any) {
+        setError(err.message);
+        return [];
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
+  const findFacebookUrl = useCallback(
+    async (businessName: string, location?: string) => {
+      try {
+        const data = await apiFetch<{ facebookUrl: string | null }>(
+          "/prospecting/find-facebook",
+          {
+            method: "POST",
+            body: JSON.stringify({ businessName, location }),
+          }
+        );
+        return data.facebookUrl;
+      } catch {
+        return null;
+      }
+    },
+    []
+  );
+
+  const enrichFacebook = useCallback(async (facebookUrl: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await apiFetch<{ profile: any; posts: any[] }>(
+        "/prospecting/enrich",
+        {
+          method: "POST",
+          body: JSON.stringify({ facebookUrl }),
+        }
+      );
+      return data;
+    } catch (err: any) {
+      setError(err.message);
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const draftOutreach = useCallback(
+    async (
+      prospect: {
+        businessName: string;
+        email: string;
+        category: string;
+        address: string;
+        website: string;
+        pageIntro: string;
+        recentPosts: { text: string; date: string }[];
+        googleRating: number | null;
+        googleReviewCount: number | null;
+        followerCount: number;
+        prospectLat: number | null;
+        prospectLng: number | null;
+      },
+      serviceName: string,
+      serviceDescription: string,
+      sender?: {
+        userName?: string;
+        userEmail?: string;
+        agencyName?: string;
+        agencyDescription?: string;
+        agencyWebsite?: string;
+        agencyEmail?: string;
+        agencyPhone?: string;
+        ownerName?: string;
+        ownerTitle?: string;
+        brandVoice?: string;
+        valuePropositions?: string[];
+        caseStudies?: string;
+        signOffName?: string;
+        agencyLat?: number;
+        agencyLng?: number;
+        localRadiusMiles?: number;
+      }
+    ) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await apiFetch<{
+          drafts: {
+            dayNumber: number;
+            emailSubject: string;
+            emailBody: string;
+            dmBody: string;
+          }[];
+        }>("/prospecting/draft-emails", {
+          method: "POST",
+          body: JSON.stringify({ prospect, serviceName, serviceDescription, sender }),
+        });
+        return data.drafts;
+      } catch (err: any) {
+        setError(err.message);
+        return [];
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
+  const getGmailAuthUrl = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ url: string }>("/prospecting/gmail/auth-url");
+      return data.url;
+    } catch (err: any) {
+      setError(err.message);
+      return null;
+    }
+  }, []);
+
+  const getGmailStatus = useCallback(async () => {
+    try {
+      return await apiFetch<{ connected: boolean; email: string | null }>(
+        "/prospecting/gmail/status"
+      );
+    } catch {
+      return { connected: false, email: null };
+    }
+  }, []);
+
+  const sendEmail = useCallback(
+    async (to: string, subject: string, body: string) => {
+      try {
+        const data = await apiFetch<{ messageId: string }>(
+          "/prospecting/gmail/send",
+          {
+            method: "POST",
+            body: JSON.stringify({ to, subject, body }),
+          }
+        );
+        return data;
+      } catch (err: any) {
+        setError(err.message);
+        return null;
+      }
+    },
+    []
+  );
+
+  const searchNearby = useCallback(
+    async (lat: number, lng: number, radius?: number, type?: string, keyword?: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await apiFetch<{ results: any[] }>("/prospecting/nearby", {
+          method: "POST",
+          body: JSON.stringify({ lat, lng, radius, type: type || undefined, keyword: keyword || undefined }),
+        });
+        return data.results;
+      } catch (err: any) {
+        setError(err.message);
+        return [];
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
+  return {
+    loading,
+    error,
+    searchBusiness,
+    searchNearby,
+    findFacebookUrl,
+    enrichFacebook,
+    draftOutreach,
+    getGmailAuthUrl,
+    getGmailStatus,
+    sendEmail,
+  };
 }

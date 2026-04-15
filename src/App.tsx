@@ -1,6 +1,23 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import IsometricOffice from './components/IsometricOffice';
-import { useAgents, useActivityFeed, useChat, useAccounts, useTaskUpdates } from './hooks/useApi';
+import ContentCreation from './components/ContentCreation';
+import SocialAnalytics from './components/SocialAnalytics';
+import FlowBucket from './components/FlowBucket';
+import AccountsCRM from './components/AccountsCRM';
+import Prospecting from './components/Prospecting';
+import Services from './components/Services';
+import Settings from './components/Settings';
+import FinanceDashboard from './components/FinanceDashboard';
+import Tasks from './components/Tasks';
+import LoginScreen from './components/LoginScreen';
+import AccessPendingScreen from './components/AccessPendingScreen';
+import AuthGateLoader from './components/AuthGateLoader';
+import { useAuth } from './hooks/useAuth';
+import { useTeamMemberProfile } from './hooks/useTeamMemberProfile';
+import { APP_ROLES, type AppUserRole } from './lib/userRoles';
+import { useAgents, useActivityFeed, useChat, useTaskUpdates } from './hooks/useApi';
+import { useFirestoreAccounts } from './hooks/useFirestore';
+import { syncTeamMember } from './hooks/useScheduleHandoffs';
 import {
   Layout,
   Users,
@@ -28,19 +45,33 @@ import {
   BookOpen,
   Tag,
   Target,
+  CheckSquare,
   AlertTriangle,
   Zap,
-  Globe
+  Globe,
+  Edit3,
+  LogOut,
+  Settings as SettingsIcon,
 } from '@geist-ui/icons';
 import { motion, AnimatePresence } from 'motion/react';
 
 // ─── Navigation ─────────────────────────────────────────────
-const navItems = [
+const navItems: {
+  id: string;
+  label: string;
+  icon: typeof Layout;
+  featured?: boolean;
+}[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Layout },
+  { id: 'tasks', label: 'Tasks', icon: CheckSquare, featured: true },
   { id: 'accounts', label: 'Accounts', icon: Users },
+  { id: 'content', label: 'Content Creation', icon: Edit3 },
+  { id: 'social', label: 'Social Analytics', icon: TrendingUp },
+  { id: 'prospecting', label: 'Prospecting', icon: Target },
   { id: 'services', label: 'Services', icon: Briefcase },
   { id: 'reports', label: 'Reports', icon: BarChart2 },
   { id: 'financials', label: 'Financials', icon: DollarSign },
+  { id: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
 
 // ─── Mock Data: Accounts ────────────────────────────────────
@@ -64,76 +95,6 @@ const drafts = [
   { id: 3, client: "Meridian Labs", title: "Week 2 Onboarding Check-In + Content Strategy Kickoff", content: "Hi Lisa, thanks for the heads-up on the new product line! I've started drafting a content strategy framework that covers blog posts, social campaigns, and email sequences for the launch. Let's schedule a kickoff call next Tuesday to align on messaging and timelines.", priority: "high" },
 ];
 
-// ─── Mock Data: Services ────────────────────────────────────
-const services = [
-  {
-    id: 1,
-    name: "Social Media Management",
-    description: "Full-service social media strategy, content creation, scheduling, and community management across all platforms.",
-    status: "active",
-    clients: 8,
-    pricing: { starter: "$1,500/mo", growth: "$3,000/mo", enterprise: "$5,500/mo" },
-    sopStatus: "complete",
-    vendors: ["Sprout Social", "Canva Pro", "CapCut"],
-    upsells: ["Paid Social Ads", "Influencer Partnerships"],
-    margin: 72,
-  },
-  {
-    id: 2,
-    name: "SEO & Content Marketing",
-    description: "Keyword research, on-page optimization, technical SEO audits, blog content creation, and link building campaigns.",
-    status: "active",
-    clients: 5,
-    pricing: { starter: "$2,000/mo", growth: "$4,000/mo", enterprise: "$7,500/mo" },
-    sopStatus: "complete",
-    vendors: ["Ahrefs", "Surfer SEO", "Clearscope"],
-    upsells: ["Local SEO", "Content Video Production"],
-    margin: 68,
-  },
-  {
-    id: 3,
-    name: "Paid Advertising (PPC)",
-    description: "Google Ads, Meta Ads, and LinkedIn Ads campaign management with full creative, targeting, and reporting.",
-    status: "active",
-    clients: 6,
-    pricing: { starter: "$2,500/mo + ad spend", growth: "$4,500/mo + ad spend", enterprise: "$8,000/mo + ad spend" },
-    sopStatus: "in-progress",
-    vendors: ["Google Ads", "Meta Business Suite", "Triple Whale"],
-    upsells: ["Landing Page Design", "CRO Audit"],
-    margin: 65,
-  },
-  {
-    id: 4,
-    name: "Email Marketing & Automation",
-    description: "Email campaign strategy, template design, automation workflows, list segmentation, and performance optimization.",
-    status: "active",
-    clients: 4,
-    pricing: { starter: "$1,200/mo", growth: "$2,500/mo", enterprise: "$4,500/mo" },
-    sopStatus: "complete",
-    vendors: ["Klaviyo", "Mailchimp", "Litmus"],
-    upsells: ["SMS Marketing", "Customer Journey Mapping"],
-    margin: 78,
-  },
-  {
-    id: 5,
-    name: "Web Design & Development",
-    description: "Custom website design, development, and maintenance using modern frameworks. Includes UX audit and conversion optimization.",
-    status: "active",
-    clients: 3,
-    pricing: { project: "$8,000–$25,000", retainer: "$2,000/mo" },
-    sopStatus: "in-progress",
-    vendors: ["Figma", "Webflow", "Vercel"],
-    upsells: ["Monthly Maintenance", "A/B Testing"],
-    margin: 60,
-  },
-];
-
-const serviceSuggestions = [
-  { type: "upsell", text: "3 clients on Social Media Management are candidates for Paid Social Ads add-on — potential $7,500/mo revenue increase." },
-  { type: "cross-sell", text: "NovaTech (SEO client) would benefit from Email Marketing & Automation — their blog traffic is converting at only 1.2%." },
-  { type: "pricing", text: "Email Marketing margins are highest at 78%. Consider promoting this service more aggressively in proposals." },
-  { type: "training", text: "Paid Advertising SOP is incomplete — recommend scheduling a team training session this week." },
-];
 
 // ─── Mock Data: Reports ─────────────────────────────────────
 const reportClients = [
@@ -151,41 +112,8 @@ const reportMetrics = [
   { label: "Next Batch Due", value: "Mar 15", change: "3 reports", trend: "neutral" },
 ];
 
-// ─── Mock Data: Financials ──────────────────────────────────
-const financialOverview = {
-  monthlyRevenue: "$68,400",
-  monthlyExpenses: "$31,200",
-  netProfit: "$37,200",
-  profitMargin: "54.4%",
-  scopeCreepLoss: "$4,800",
-  revenueGoal: "$75,000",
-  revenueProgress: 91.2,
-};
 
-const accountProfitability = [
-  { name: "Pinnacle Group", revenue: "$8,500", cost: "$3,200", margin: "62%", scopeCreep: false, services: 2 },
-  { name: "NovaTech", revenue: "$11,500", cost: "$4,800", margin: "58%", scopeCreep: true, services: 2 },
-  { name: "Meridian Labs", revenue: "$4,700", cost: "$2,900", margin: "38%", scopeCreep: true, services: 2 },
-  { name: "Crestline Brands", revenue: "$7,000", cost: "$2,400", margin: "66%", scopeCreep: false, services: 2 },
-  { name: "Vertex Solutions", revenue: "$6,800", cost: "$2,100", margin: "69%", scopeCreep: false, services: 2 },
-  { name: "Atlas Digital", revenue: "$9,200", cost: "$4,600", margin: "50%", scopeCreep: true, services: 3 },
-  { name: "BluePeak Media", revenue: "$5,500", cost: "$1,800", margin: "67%", scopeCreep: false, services: 1 },
-  { name: "Orion Creative", revenue: "$15,200", cost: "$9,400", margin: "38%", scopeCreep: true, services: 4 },
-];
 
-const scopeCreepAlerts = [
-  { client: "Orion Creative", issue: "4 extra revision rounds on web design project — 12 unbilled hours", impact: "$1,800", severity: "high" },
-  { client: "NovaTech", issue: "Additional keyword research requests outside SOW — 6 unbilled hours", impact: "$900", severity: "medium" },
-  { client: "Meridian Labs", issue: "Unscoped social platform (TikTok) added mid-month without contract update", impact: "$1,200", severity: "high" },
-  { client: "Atlas Digital", issue: "Frequent off-cycle reporting requests — 3 extra reports this month", impact: "$900", severity: "medium" },
-];
-
-const financialGoals = [
-  { label: "Monthly Revenue Target", current: "$68,400", target: "$75,000", progress: 91.2 },
-  { label: "Profit Margin Target", current: "54.4%", target: "60%", progress: 90.7 },
-  { label: "Scope Creep Reduction", current: "$4,800", target: "< $2,000", progress: 41.7 },
-  { label: "New Client Acquisition", current: "1", target: "3", progress: 33.3 },
-];
 
 // ─── Agent Orchestration ────────────────────────────────────
 const agentDefinitions = [
@@ -263,24 +191,99 @@ const agentActivity = [
 
 // ─── Component ──────────────────────────────────────────────
 export default function App() {
+  const { user, loading: authLoading, signOut } = useAuth();
+  const {
+    profile,
+    loading: profileLoading,
+    isAllowed,
+    firestoreError,
+    docMissing,
+  } = useTeamMemberProfile(user?.uid ?? null);
+
+  if (authLoading) {
+    return <AuthGateLoader />;
+  }
+
+  if (!user) {
+    return <LoginScreen />;
+  }
+
+  if (profileLoading) {
+    return <AuthGateLoader />;
+  }
+
+  if (!isAllowed || !profile) {
+    return (
+      <AccessPendingScreen
+        signOut={signOut}
+        email={user.email}
+        authUid={user.uid}
+        firestoreError={firestoreError}
+        docMissing={docMissing}
+      />
+    );
+  }
+
+  return <AuthenticatedApp user={user} signOut={signOut} role={profile.role} />;
+}
+
+function AuthenticatedApp({
+  user,
+  signOut,
+  role,
+}: {
+  user: import('firebase/auth').User;
+  signOut: () => Promise<void>;
+  role: AppUserRole;
+}) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [message, setMessage] = useState('');
   const [isCopied, setIsCopied] = useState<number | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [expandedService, setExpandedService] = useState<number | null>(null);
   const [selectedReportClient, setSelectedReportClient] = useState<number | null>(null);
+  const [accountsSubTab, setAccountsSubTab] = useState<'overview' | 'crm'>('overview');
   const [isAgentDropdownOpen, setIsAgentDropdownOpen] = useState(false);
   const [agentStates, setAgentStates] = useState<Record<string, boolean>>(
     Object.fromEntries(agentDefinitions.map(a => [a.id, true]))
   );
   const agentDropdownRef = useRef<HTMLDivElement>(null);
 
+  const visibleNavItems = useMemo(
+    () =>
+      role === APP_ROLES.ADMIN
+        ? navItems
+        : navItems.filter((i) => i.id !== 'financials' && i.id !== 'settings'),
+    [role]
+  );
+
+  const dashboardQuickActions = useMemo(() => {
+    const items = [
+      { label: "Tasks", sub: "Featured — agency task workspace", tab: "tasks" as const, icon: CheckSquare, featured: true as const },
+      { label: "Review Drafts", sub: "3 pending communications", tab: "accounts" as const, icon: FileText },
+      { label: "Service Health", sub: "1 SOP needs attention", tab: "services" as const, icon: Shield },
+      { label: "Generate Reports", sub: "1 overdue report", tab: "reports" as const, icon: BarChart2 },
+      { label: "Scope Creep Alerts", sub: "4 active warnings", tab: "financials" as const, icon: AlertTriangle },
+    ];
+    if (role === APP_ROLES.ADMIN) return items;
+    return items.filter((a) => a.tab !== 'financials');
+  }, [role]);
+
+  useEffect(() => {
+    if (role !== APP_ROLES.ADMIN && (activeTab === 'financials' || activeTab === 'settings')) {
+      setActiveTab('dashboard');
+    }
+  }, [role, activeTab]);
+
   // ─── API Hooks ──────────────────────────────────────────
   const { agents: apiAgents, toggleAgent: apiToggleAgent } = useAgents();
   const activityItems = useActivityFeed(20);
   const accountsChat = useChat('accounts');
-  const { accounts: apiAccounts } = useAccounts();
+  const { accounts: apiAccounts } = useFirestoreAccounts();
   const currentTasks = useTaskUpdates();
+
+  useEffect(() => {
+    void syncTeamMember(user);
+  }, [user.uid, user.displayName, user.email, user.photoURL]);
 
   // Sync API agent states into local state
   useEffect(() => {
@@ -326,10 +329,6 @@ export default function App() {
         <div>
           <h2 className="text-3xl font-semibold text-white">Dashboard</h2>
           <p className="text-zinc-400 text-sm mt-1">Agency command center — all AI agents at a glance</p>
-        </div>
-        <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-[#12121A] border border-[#27273A] text-sm text-zinc-300">
-          <Star size={16} className="text-purple-400" />
-          Powered by Google Gemini
         </div>
       </div>
 
@@ -448,23 +447,27 @@ export default function App() {
       </div>
 
       {/* Quick Actions Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: "Review Drafts", sub: "3 pending communications", tab: "accounts", icon: FileText },
-          { label: "Service Health", sub: "1 SOP needs attention", tab: "services", icon: Shield },
-          { label: "Generate Reports", sub: "1 overdue report", tab: "reports", icon: BarChart2 },
-          { label: "Scope Creep Alerts", sub: "4 active warnings", tab: "financials", icon: AlertTriangle },
-        ].map((action, i) => (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {dashboardQuickActions.map((action, i) => (
           <button
             key={i}
             onClick={() => setActiveTab(action.tab)}
-            className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5 text-left hover:border-purple-500/40 transition-all group"
+            className={`bg-[#12121A] border rounded-2xl p-5 text-left hover:border-purple-500/40 transition-all group ${
+              'featured' in action && action.featured
+                ? 'border-amber-500/35 ring-1 ring-amber-500/15'
+                : 'border-[#27273A]'
+            }`}
           >
             <div className="flex items-center justify-between mb-3">
               <action.icon size={18} className="text-zinc-500 group-hover:text-purple-400 transition-colors" />
               <ArrowUpRight size={14} className="text-zinc-600 group-hover:text-purple-400 transition-colors" />
             </div>
-            <p className="text-sm font-medium text-white mb-1">{action.label}</p>
+            <p className="text-sm font-medium text-white mb-1 flex items-center gap-2 flex-wrap">
+              {action.label}
+              {'featured' in action && action.featured && (
+                <Star size={12} className="text-amber-400 shrink-0" />
+              )}
+            </p>
             <p className="text-xs text-zinc-500">{action.sub}</p>
           </button>
         ))}
@@ -480,23 +483,32 @@ export default function App() {
       transition={{ duration: 0.4 }}
       className="max-w-7xl mx-auto"
     >
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+      {/* Header + Sub-tabs */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
         <div>
           <h2 className="text-3xl font-semibold text-white">Accounts</h2>
           <p className="text-zinc-400 text-sm mt-1">AI-powered client relationship management</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#12121A] border border-[#27273A] text-sm text-zinc-300 hover:bg-[#181824] transition-colors">
-            Agent Relationship Score
-            <ChevronDown size={16} />
-          </button>
-          <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-[#12121A] border border-[#27273A] text-sm text-zinc-300">
-            <Star size={16} className="text-purple-400" />
-            Powered by Google Gemini
-          </div>
-        </div>
       </div>
+      <div className="flex items-center gap-1 mb-8 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-fit">
+        {([['overview', 'AI Overview'], ['crm', 'CRM']] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setAccountsSubTab(id)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              accountsSubTab === id
+                ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.2)]'
+                : 'text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {accountsSubTab === 'crm' ? <AccountsCRM /> : (<>
+
+      {/* AI Overview content */}
 
       {/* Chat Panel */}
       <div className="bg-[#12121A] border border-[#27273A] rounded-3xl p-6 sm:p-8 relative overflow-hidden mb-8 shadow-lg">
@@ -675,200 +687,10 @@ export default function App() {
           </div>
         </div>
       </div>
+      </>)}
     </motion.div>
   );
 
-  // ─── Services Tab ───────────────────────────────────────
-  const renderServices = () => (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4 }}
-      className="max-w-7xl mx-auto"
-    >
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
-        <div>
-          <h2 className="text-3xl font-semibold text-white">Services</h2>
-          <p className="text-zinc-400 text-sm mt-1">AI-powered service operations and planning</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-purple-500 text-sm text-white font-medium hover:from-purple-500 hover:to-purple-400 transition-all shadow-[0_0_15px_rgba(168,85,247,0.2)]">
-            <Plus size={16} /> Add Service
-          </button>
-          <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-[#12121A] border border-[#27273A] text-sm text-zinc-300">
-            <Star size={16} className="text-purple-400" />
-            Powered by Google Gemini
-          </div>
-        </div>
-      </div>
-
-      {/* Chat Panel */}
-      <div className="bg-[#12121A] border border-[#27273A] rounded-3xl p-6 sm:p-8 relative overflow-hidden mb-8 shadow-lg">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-6">
-            <h3 className="text-xl font-medium text-white mb-2">Service Agent</h3>
-            <p className="text-sm text-zinc-500">Add a service, ask about pricing strategies, generate SOPs, or explore upsell opportunities</p>
-          </div>
-          <div className="relative rounded-full bg-[#0A0A0F] border border-purple-500/30 shadow-[0_0_20px_rgba(168,85,247,0.15)] p-1.5 flex items-center transition-all focus-within:border-purple-500/60 focus-within:shadow-[0_0_30px_rgba(168,85,247,0.25)]">
-            <input
-              type="text"
-              placeholder="Describe a new service or ask about existing ones..."
-              className="flex-1 bg-transparent border-none outline-none text-white placeholder-zinc-500 px-6 py-3 text-base sm:text-lg"
-            />
-            <button className="p-3 mr-1 rounded-full text-purple-400 hover:bg-purple-500/10 transition-colors">
-              <Send size={20} />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* AI Suggestions Bar */}
-      <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5 mb-8 shadow-lg">
-        <h3 className="text-sm font-medium text-zinc-400 mb-4 uppercase tracking-wider flex items-center gap-2">
-          <Zap size={14} className="text-purple-400" /> Agent Insights & Suggestions
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {serviceSuggestions.map((sug, i) => (
-            <div key={i} className="flex items-start gap-3 p-3.5 rounded-xl bg-[#0A0A0F] border border-[#27273A] hover:border-purple-500/30 transition-colors">
-              <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
-                sug.type === 'upsell' ? 'bg-purple-400' : sug.type === 'cross-sell' ? 'bg-blue-400' : sug.type === 'pricing' ? 'bg-emerald-400' : 'bg-amber-400'
-              }`}></span>
-              <div>
-                <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 mb-1 block">
-                  {sug.type.replace('-', ' ')}
-                </span>
-                <p className="text-sm text-zinc-300 leading-relaxed">{sug.text}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Services Grid */}
-      <div className="space-y-4">
-        {services.map((service) => {
-          const isExpanded = expandedService === service.id;
-          return (
-            <motion.div
-              key={service.id}
-              layout
-              className="bg-[#12121A] border border-[#27273A] rounded-3xl overflow-hidden shadow-lg hover:border-purple-500/20 transition-colors"
-            >
-              {/* Service Header */}
-              <button
-                onClick={() => setExpandedService(isExpanded ? null : service.id)}
-                className="w-full p-6 sm:p-8 text-left"
-              >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-600/20 to-purple-400/10 border border-purple-500/20 flex items-center justify-center shrink-0">
-                      <Package size={20} className="text-purple-400" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-medium text-white">{service.name}</h3>
-                      <p className="text-sm text-zinc-400 mt-0.5 max-w-xl">{service.description}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 sm:gap-4 shrink-0">
-                    <div className="text-right hidden sm:block">
-                      <p className="text-xs text-zinc-500">Clients</p>
-                      <p className="text-sm font-medium text-white">{service.clients}</p>
-                    </div>
-                    <div className="text-right hidden sm:block">
-                      <p className="text-xs text-zinc-500">Margin</p>
-                      <p className={`text-sm font-medium ${service.margin >= 70 ? 'text-emerald-400' : service.margin >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{service.margin}%</p>
-                    </div>
-                    <div className={`px-3 py-1 rounded-full text-xs font-medium ${
-                      service.sopStatus === 'complete' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                    }`}>
-                      SOP: {service.sopStatus === 'complete' ? 'Complete' : 'In Progress'}
-                    </div>
-                    <ChevronDown size={18} className={`text-zinc-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                  </div>
-                </div>
-              </button>
-
-              {/* Expanded Details */}
-              <AnimatePresence>
-                {isExpanded && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="px-6 sm:px-8 pb-6 sm:pb-8 border-t border-[#27273A] pt-6">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {/* Pricing */}
-                        <div className="bg-[#0A0A0F] border border-[#27273A] rounded-2xl p-5">
-                          <div className="flex items-center gap-2 mb-4">
-                            <Tag size={14} className="text-purple-400" />
-                            <h4 className="text-sm font-medium text-white">Pricing Tiers</h4>
-                          </div>
-                          <div className="space-y-3">
-                            {Object.entries(service.pricing).map(([tier, price]) => (
-                              <div key={tier} className="flex items-center justify-between">
-                                <span className="text-xs text-zinc-400 capitalize">{tier}</span>
-                                <span className="text-sm font-medium text-white">{price}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Vendors */}
-                        <div className="bg-[#0A0A0F] border border-[#27273A] rounded-2xl p-5">
-                          <div className="flex items-center gap-2 mb-4">
-                            <Briefcase size={14} className="text-purple-400" />
-                            <h4 className="text-sm font-medium text-white">Vendors & Tools</h4>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {service.vendors.map((vendor, i) => (
-                              <span key={i} className="text-xs px-3 py-1.5 rounded-lg bg-[#12121A] border border-[#27273A] text-zinc-300">{vendor}</span>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Upsells */}
-                        <div className="bg-[#0A0A0F] border border-[#27273A] rounded-2xl p-5">
-                          <div className="flex items-center gap-2 mb-4">
-                            <TrendingUp size={14} className="text-purple-400" />
-                            <h4 className="text-sm font-medium text-white">Upsell Opportunities</h4>
-                          </div>
-                          <div className="space-y-2">
-                            {service.upsells.map((upsell, i) => (
-                              <div key={i} className="flex items-center gap-2 text-sm text-zinc-300">
-                                <ArrowUpRight size={12} className="text-purple-400 shrink-0" />
-                                {upsell}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Action Buttons */}
-                      <div className="flex flex-wrap items-center gap-3 mt-6">
-                        <button className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-purple-500 text-white text-xs font-medium hover:from-purple-500 hover:to-purple-400 transition-all shadow-[0_0_15px_rgba(168,85,247,0.2)]">
-                          <FileText size={14} /> View Full SOP
-                        </button>
-                        <button className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0A0A0F] border border-[#27273A] text-zinc-300 text-xs font-medium hover:border-purple-500/40 transition-colors">
-                          <BookOpen size={14} /> Training Docs
-                        </button>
-                        <button className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0A0A0F] border border-[#27273A] text-zinc-300 text-xs font-medium hover:border-purple-500/40 transition-colors">
-                          <RefreshCw size={14} /> Regenerate Plan
-                        </button>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
-          );
-        })}
-      </div>
-    </motion.div>
-  );
 
   // ─── Reports Tab ────────────────────────────────────────
   const renderReports = () => (
@@ -888,10 +710,6 @@ export default function App() {
           <button className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-purple-500 text-sm text-white font-medium hover:from-purple-500 hover:to-purple-400 transition-all shadow-[0_0_15px_rgba(168,85,247,0.2)]">
             <Plus size={16} /> Generate Report
           </button>
-          <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-[#12121A] border border-[#27273A] text-sm text-zinc-300">
-            <Star size={16} className="text-purple-400" />
-            Powered by Google Gemini
-          </div>
         </div>
       </div>
 
@@ -1062,204 +880,21 @@ export default function App() {
     </motion.div>
   );
 
-  // ─── Financials Tab ─────────────────────────────────────
-  const renderFinancials = () => (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4 }}
-      className="max-w-7xl mx-auto"
-    >
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
-        <div>
-          <h2 className="text-3xl font-semibold text-white">Financials</h2>
-          <p className="text-zinc-400 text-sm mt-1">AI-driven financial oversight — stay profitable, stay on track</p>
-        </div>
-        <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-[#12121A] border border-[#27273A] text-sm text-zinc-300">
-          <Star size={16} className="text-purple-400" />
-          Powered by Google Gemini
-        </div>
-      </div>
-
-      {/* Chat Panel */}
-      <div className="bg-[#12121A] border border-[#27273A] rounded-3xl p-6 sm:p-8 relative overflow-hidden mb-8 shadow-lg">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-6">
-            <h3 className="text-xl font-medium text-white mb-2">Financial Agent</h3>
-            <p className="text-sm text-zinc-500">Analyze profitability, detect scope creep, track goals, or review account margins</p>
-          </div>
-          <div className="relative rounded-full bg-[#0A0A0F] border border-purple-500/30 shadow-[0_0_20px_rgba(168,85,247,0.15)] p-1.5 flex items-center transition-all focus-within:border-purple-500/60 focus-within:shadow-[0_0_30px_rgba(168,85,247,0.25)]">
-            <input
-              type="text"
-              placeholder="Ask about margins, scope creep, or financial health..."
-              className="flex-1 bg-transparent border-none outline-none text-white placeholder-zinc-500 px-6 py-3 text-base sm:text-lg"
-            />
-            <button className="p-3 mr-1 rounded-full text-purple-400 hover:bg-purple-500/10 transition-colors">
-              <Send size={20} />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Financial Overview Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {[
-          { label: "Monthly Revenue", value: financialOverview.monthlyRevenue, icon: TrendingUp, color: "text-emerald-400", bg: "from-emerald-600 to-emerald-400" },
-          { label: "Net Profit", value: financialOverview.netProfit, icon: DollarSign, color: "text-emerald-400", bg: "from-purple-600 to-purple-400" },
-          { label: "Profit Margin", value: financialOverview.profitMargin, icon: Target, color: "text-purple-400", bg: "from-blue-600 to-blue-400" },
-          { label: "Scope Creep Loss", value: financialOverview.scopeCreepLoss, icon: AlertTriangle, color: "text-red-400", bg: "from-red-600 to-red-400" },
-        ].map((card, i) => (
-          <motion.div
-            key={i}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: i * 0.08 }}
-            className="bg-[#12121A] border border-[#27273A] rounded-2xl p-6 relative overflow-hidden"
-          >
-            <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${card.bg} flex items-center justify-center mb-4 shadow-lg opacity-90`}>
-              <card.icon size={18} className="text-white" />
-            </div>
-            <p className="text-zinc-400 text-xs mb-1">{card.label}</p>
-            <p className={`text-2xl font-semibold ${i === 3 ? 'text-red-400' : 'text-white'}`}>{card.value}</p>
-          </motion.div>
-        ))}
-      </div>
-
-      {/* Revenue Goal Progress */}
-      <div className="bg-[#12121A] border border-[#27273A] rounded-3xl p-6 sm:p-8 shadow-lg mb-8">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-medium text-white">Agency Goals</h3>
-          <span className="text-xs text-zinc-500">March 2026</span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-          {financialGoals.map((goal, i) => (
-            <div key={i}>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-zinc-300">{goal.label}</span>
-                <span className="text-xs text-zinc-500">{goal.current} / {goal.target}</span>
-              </div>
-              <div className="h-2.5 bg-[#0A0A0F] rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full ${
-                    goal.progress >= 80 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' :
-                    goal.progress >= 50 ? 'bg-gradient-to-r from-amber-600 to-amber-400' :
-                    'bg-gradient-to-r from-red-600 to-red-400'
-                  }`}
-                  style={{ width: `${Math.min(goal.progress, 100)}%` }}
-                ></div>
-              </div>
-              <p className={`text-xs mt-1.5 ${
-                goal.progress >= 80 ? 'text-emerald-400' : goal.progress >= 50 ? 'text-amber-400' : 'text-red-400'
-              }`}>
-                {goal.progress.toFixed(1)}% complete
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Two Columns: Account Profitability + Scope Creep */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Account Profitability */}
-        <div className="bg-[#12121A] border border-[#27273A] rounded-3xl p-6 sm:p-8 shadow-lg">
-          <h3 className="text-lg font-medium text-white mb-6">Account Profitability</h3>
-          <div className="space-y-1">
-            {accountProfitability.map((account, i) => {
-              const marginNum = parseInt(account.margin);
-              return (
-                <div key={i} className="flex items-center justify-between p-3.5 rounded-xl hover:bg-[#181824] transition-colors">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={`w-2 h-2 rounded-full shrink-0 ${marginNum >= 60 ? 'bg-emerald-400' : marginNum >= 50 ? 'bg-amber-400' : 'bg-red-400'}`}></div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-white truncate">{account.name}</p>
-                      <p className="text-xs text-zinc-500">{account.services} services</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 shrink-0">
-                    <div className="text-right hidden sm:block">
-                      <p className="text-xs text-zinc-500">Revenue</p>
-                      <p className="text-sm text-white">{account.revenue}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-zinc-500">Margin</p>
-                      <p className={`text-sm font-medium ${marginNum >= 60 ? 'text-emerald-400' : marginNum >= 50 ? 'text-amber-400' : 'text-red-400'}`}>{account.margin}</p>
-                    </div>
-                    {account.scopeCreep && (
-                      <AlertTriangle size={14} className="text-red-400" />
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Scope Creep Alerts */}
-        <div className="bg-[#12121A] border border-[#27273A] rounded-3xl p-6 sm:p-8 shadow-lg">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-medium text-white">Scope Creep Alerts</h3>
-            <span className="text-xs px-2.5 py-1 rounded-full bg-red-500/10 text-red-400 border border-red-500/20">
-              {scopeCreepAlerts.length} active
-            </span>
-          </div>
-          <div className="space-y-4">
-            {scopeCreepAlerts.map((alert, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.3, delay: i * 0.08 }}
-                className={`p-4 rounded-2xl border ${
-                  alert.severity === 'high' ? 'bg-red-500/5 border-red-500/20' : 'bg-amber-500/5 border-amber-500/20'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full ${alert.severity === 'high' ? 'bg-red-400' : 'bg-amber-400'}`}></span>
-                    <span className="text-sm font-medium text-white">{alert.client}</span>
-                  </div>
-                  <span className={`text-sm font-semibold ${alert.severity === 'high' ? 'text-red-400' : 'text-amber-400'}`}>
-                    -{alert.impact}
-                  </span>
-                </div>
-                <p className="text-sm text-zinc-400 leading-relaxed pl-4">{alert.issue}</p>
-                <div className="flex items-center gap-2 mt-3 pl-4">
-                  <button className="text-xs text-purple-400 hover:text-purple-300 transition-colors flex items-center gap-1">
-                    <FileText size={12} /> Review SOW
-                  </button>
-                  <span className="text-zinc-700">|</span>
-                  <button className="text-xs text-purple-400 hover:text-purple-300 transition-colors flex items-center gap-1">
-                    <Send size={12} /> Draft Invoice
-                  </button>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-
-          {/* Total Impact */}
-          <div className="mt-6 pt-6 border-t border-[#27273A]">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400">Total Estimated Loss</span>
-              <span className="text-lg font-semibold text-red-400">-$4,800</span>
-            </div>
-            <p className="text-xs text-zinc-500 mt-2">
-              The Financial Agent recommends addressing high-severity alerts first. Updating SOWs and setting clear revision limits could recover ~$3,000/month.
-            </p>
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-
   // ─── Content Router ─────────────────────────────────────
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard': return renderDashboard();
       case 'accounts': return renderAccounts();
-      case 'services': return renderServices();
+      case 'content': return <ContentCreation />;
+      case 'social': return <SocialAnalytics />;
+      case 'prospecting': return <Prospecting user={user} />;
+      case 'services': return <Services />;
       case 'reports': return renderReports();
-      case 'financials': return renderFinancials();
+      case 'financials':
+        return role === APP_ROLES.ADMIN ? <FinanceDashboard /> : renderDashboard();
+      case 'tasks': return <Tasks user={user} />;
+      case 'settings':
+        return role === APP_ROLES.ADMIN ? <Settings user={user} /> : renderDashboard();
       default: return renderDashboard();
     }
   };
@@ -1299,7 +934,7 @@ export default function App() {
         </div>
 
         <nav className="flex-1 px-4 py-4 space-y-2 overflow-y-auto">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (
@@ -1316,7 +951,12 @@ export default function App() {
                 }`}
               >
                 <Icon size={18} className={isActive ? 'text-white' : 'text-zinc-500'} />
-                {item.label}
+                <span className="flex-1 text-left truncate">{item.label}</span>
+                {item.featured && (
+                  <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/25">
+                    Featured
+                  </span>
+                )}
               </button>
             );
           })}
@@ -1326,13 +966,27 @@ export default function App() {
         <div className="p-4 border-t border-[#27273A]">
           <div className="flex items-center gap-3 px-3 py-3">
             <div className="relative">
-              <img src="https://i.pravatar.cc/150?u=admin" alt="User" className="w-9 h-9 rounded-full border border-[#27273A]" />
+              <img
+                src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || user.email || 'U')}&background=7c3aed&color=fff&size=36`}
+                alt=""
+                className="w-9 h-9 rounded-full border border-[#27273A]"
+              />
               <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[#12121A]"></div>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-white truncate">Christopher B.</p>
-              <p className="text-xs text-zinc-500 truncate">Agency Owner</p>
+              <p className="text-sm font-medium text-white truncate">{user.displayName || user.email?.split('@')[0] || 'Team Member'}</p>
+              <p className="text-xs text-zinc-500 truncate">{user.email}</p>
+              <p className="text-[10px] text-zinc-600 mt-0.5">
+                {role === APP_ROLES.ADMIN ? 'Admin' : 'Team member'}
+              </p>
             </div>
+            <button
+              onClick={signOut}
+              className="p-1.5 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+              title="Sign out"
+            >
+              <LogOut size={14} />
+            </button>
           </div>
         </div>
       </aside>
@@ -1382,7 +1036,7 @@ export default function App() {
                       <div className="flex items-center justify-between">
                         <div>
                           <h3 className="text-sm font-medium text-white">Agent Orchestration</h3>
-                          <p className="text-[11px] text-zinc-500 mt-0.5">Multi-agent system powered by Google Gemini</p>
+                          <p className="text-[11px] text-zinc-500 mt-0.5">Multi-agent system</p>
                         </div>
                         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
@@ -1479,6 +1133,7 @@ export default function App() {
           </AnimatePresence>
         </div>
       </main>
+      <FlowBucket />
     </div>
   );
 }

@@ -1,98 +1,45 @@
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import path from "path";
-import * as schema from "./schema.js";
+import { initializeApp } from "firebase/app";
+import {
+  getFirestore,
+  collection,
+  doc,
+  setDoc,
+  addDoc,
+  serverTimestamp,
+} from "firebase/firestore";
 
-const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), "data.db");
-const sqlite = new Database(DB_PATH);
-sqlite.pragma("journal_mode = WAL");
-sqlite.pragma("foreign_keys = ON");
-const db = drizzle(sqlite, { schema });
+const firebaseConfig = {
+  apiKey: "AIzaSyAkvNPMQ5UPnUcmXXfR9bRxGGRsxKarvr0",
+  authDomain: "ai-designer-b3ea6.firebaseapp.com",
+  projectId: "ai-designer-b3ea6",
+  storageBucket: "ai-designer-b3ea6.firebasestorage.app",
+  messagingSenderId: "309126109469",
+  appId: "1:309126109469:web:781b7beaaf4900bcf1e9f4",
+  measurementId: "G-P9CMTRVVHR",
+};
 
-function createTables() {
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS agents (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL, role TEXT NOT NULL,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      system_prompt TEXT, config TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS tasks (
-      id TEXT PRIMARY KEY,
-      agent_id TEXT NOT NULL REFERENCES agents(id),
-      type TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      input TEXT, output TEXT, parent_id TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      completed_at TEXT
-    );
-    CREATE TABLE IF NOT EXISTS activity_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      agent_id TEXT NOT NULL REFERENCES agents(id),
-      action TEXT NOT NULL, task_id TEXT, metadata TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS conversations (
-      id TEXT PRIMARY KEY,
-      agent_id TEXT NOT NULL REFERENCES agents(id),
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      conversation_id TEXT NOT NULL REFERENCES conversations(id),
-      role TEXT NOT NULL, content TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS accounts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL, company TEXT NOT NULL, email TEXT,
-      avatar TEXT, logo TEXT, platform TEXT,
-      industry TEXT, website TEXT, description TEXT,
-      brand_voice TEXT, target_audience TEXT,
-      brand_colors TEXT, social_handles TEXT, services_subscribed TEXT,
-      contract_start TEXT, contract_end TEXT, monthly_retainer TEXT,
-      status TEXT NOT NULL DEFAULT 'active', notes TEXT, metadata TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS contacts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      name TEXT NOT NULL, title TEXT, email TEXT, phone TEXT,
-      is_primary INTEGER NOT NULL DEFAULT 0, notes TEXT, avatar TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS services_catalog (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL, description TEXT,
-      status TEXT NOT NULL DEFAULT 'active',
-      clients INTEGER DEFAULT 0, pricing TEXT, margin REAL,
-      sop_status TEXT, vendors TEXT, upsells TEXT
-    );
-  `);
-}
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
 async function seed() {
-  console.log("Seeding database...");
-  createTables();
-  console.log("  ✓ Tables created");
+  console.log("Seeding Firestore...\n");
 
-  // --- Agents ---
+  // ─── Agents ────────────────────────────────────────────
   const agentDefs = [
-    { id: "orchestrator", name: "Orchestrator Agent", role: "Main Agent — coordinates all sub-agents, manages task delegation, and ensures system-wide coherence", enabled: true, systemPrompt: null },
-    { id: "accounts", name: "Account Agent", role: "Client relationships, communications, follow-ups, upsells, onboarding", enabled: true, systemPrompt: null },
-    { id: "services", name: "Service Agent", role: "Service plans, pricing, SOPs, vendor management, training docs", enabled: true, systemPrompt: null },
-    { id: "reports", name: "Report Agent", role: "Performance reports, social media analytics, Google Analytics insights", enabled: true, systemPrompt: null },
-    { id: "financials", name: "Financial Agent", role: "Financial health, profitability, scope creep detection, margin tracking", enabled: true, systemPrompt: null },
+    { id: "orchestrator", name: "Orchestrator Agent", role: "Main Agent — coordinates all sub-agents, manages task delegation, and ensures system-wide coherence", enabled: true },
+    { id: "accounts", name: "Account Agent", role: "Client relationships, communications, follow-ups, upsells, onboarding", enabled: true },
+    { id: "services", name: "Service Agent", role: "Service plans, pricing, SOPs, vendor management, training docs", enabled: true },
+    { id: "reports", name: "Report Agent", role: "Performance reports, social media analytics, Google Analytics insights", enabled: true },
+    { id: "financials", name: "Financial Agent", role: "Financial health, profitability, scope creep detection, margin tracking", enabled: true },
   ];
 
   for (const agent of agentDefs) {
-    db.insert(schema.agents).values(agent).onConflictDoNothing().run();
+    const { id, ...data } = agent;
+    await setDoc(doc(db, "agents", id), { ...data, createdAt: serverTimestamp() });
   }
   console.log("  ✓ Agents seeded");
 
-  // --- Accounts (clients / brands) ---
+  // ─── Accounts ──────────────────────────────────────────
   const clientAccounts = [
     {
       name: "Pinnacle Group", company: "Pinnacle Group",
@@ -176,22 +123,23 @@ async function seed() {
       name: "Salvatori's Italian Eatery", company: "Salvatori's Italian Eatery",
       email: "info@salvatorisitalian.com", avatar: "https://i.pravatar.cc/150?u=salvatoris", platform: "Email",
       industry: "Restaurant & Food Service", website: "https://salvatorisitalian.com",
-      description: "Family-owned authentic Italian eatery established in 2006 in New Haven, Indiana. Grown to 7 locations across Northeast Indiana including Fort Wayne, Auburn, Leo, and Warsaw. Voted #1 Italian Restaurant 6 years running, plus 2024 Readers' Choice Best Overall Restaurant, Best Wait Staff, Best Locally Owned, and Best Family Owned Restaurant.",
-      brandVoice: "Warm, family-oriented, and authentically Italian. Community-focused with pride in tradition, quality, and hospitality. Inviting and down-to-earth — 'Our Family Serving Yours.' Avoids pretentiousness; celebrates generous portions, homemade recipes, and local roots.",
-      targetAudience: "Families, couples, and local diners across Northeast Indiana seeking affordable, authentic Italian cuisine. All ages — from date-night adults to family gatherings. Values generous portions, friendly service, and a welcoming atmosphere.",
+      description: "Family-owned authentic Italian eatery established in 2006 in New Haven, Indiana. Grown to 7 locations across Northeast Indiana.",
+      brandVoice: "Warm, family-oriented, and authentically Italian. Community-focused with pride in tradition, quality, and hospitality.",
+      targetAudience: "Families, couples, and local diners across Northeast Indiana seeking affordable, authentic Italian cuisine.",
       brandColors: ["#8B1A1A", "#D4A843", "#1A3C2A"],
       socialHandles: { instagram: "@salvatorisitalian", facebook: "salvatoris.italian" },
       servicesSubscribed: ["Social Media Management"],
       contractStart: "2026-03-01", contractEnd: "2027-02-28", monthlyRetainer: "$3,500",
-      status: "active", notes: "New client — 7-location Italian restaurant group in NE Indiana. Focus on local social media presence, community engagement, and promoting seasonal specials and catering services.",
+      accountType: "Restaurant",
+      status: "active", notes: "New client — 7-location Italian restaurant group in NE Indiana.",
     },
     {
       name: "BluePeak Media", company: "BluePeak Media",
       email: "contact@bluepeakmedia.com", avatar: "https://i.pravatar.cc/150?u=bluepeak", platform: "Email",
       industry: "Media & Publishing", website: "https://bluepeakmedia.com",
       description: "Independent media company running niche newsletters and podcasts in the finance and tech space.",
-      brandVoice: "Sharp, witty, and informative. Think newsletter-style writing — punchy, concise, opinionated. Uses metaphors well.",
-      targetAudience: "Finance professionals, tech enthusiasts, and knowledge workers ages 28-50 who consume daily newsletters.",
+      brandVoice: "Sharp, witty, and informative. Think newsletter-style writing — punchy, concise, opinionated.",
+      targetAudience: "Finance professionals, tech enthusiasts, and knowledge workers ages 28-50.",
       brandColors: ["#0C4A6E", "#38BDF8", "#F8FAFC"],
       socialHandles: { instagram: "@bluepeakmedia", twitter: "@BluePeakMedia", linkedin: "bluepeak-media" },
       servicesSubscribed: ["Social Media Management"],
@@ -204,62 +152,74 @@ async function seed() {
       industry: "Design & Creative Agency", website: "https://orioncreative.com",
       description: "Full-service creative agency handling branding, packaging design, and campaign creative for CPG and fashion brands.",
       brandVoice: "Artful, expressive, and visually-minded. Speaks in design language. Inspires creativity. Polished yet playful.",
-      targetAudience: "Brand directors, CMOs, and creative leads at CPG, fashion, and luxury brands seeking premium creative partners.",
+      targetAudience: "Brand directors, CMOs, and creative leads at CPG, fashion, and luxury brands.",
       brandColors: ["#1C1917", "#A855F7", "#FDE68A"],
       socialHandles: { instagram: "@orioncreative", twitter: "@OrionCreativeHQ", linkedin: "orion-creative", tiktok: "@orioncreative" },
       servicesSubscribed: ["Social Media Management", "SEO & Content Marketing", "Paid Advertising (PPC)", "Web Design & Development"],
       contractStart: "2025-04-01", contractEnd: "2026-03-31", monthlyRetainer: "$15,200",
-      status: "active", notes: "Highest-revenue account but margin under pressure. 4 extra revision rounds on web design — 12 unbilled hours.",
+      status: "active", notes: "Highest-revenue account but margin under pressure. 4 extra revision rounds on web design.",
     },
   ];
 
-  sqlite.exec("DELETE FROM contacts");
-  sqlite.exec("DELETE FROM accounts");
-  for (const acct of clientAccounts) {
-    db.insert(schema.accounts).values(acct as any).run();
-  }
-  console.log("  ✓ Accounts seeded");
+  const accountIdMap: Record<number, string> = {};
 
-  // --- Contacts ---
+  for (let i = 0; i < clientAccounts.length; i++) {
+    const acct = clientAccounts[i];
+    const ref = await addDoc(collection(db, "accounts"), {
+      ...acct,
+      logo: null,
+      metadata: null,
+      createdAt: serverTimestamp(),
+    });
+    accountIdMap[i + 1] = ref.id;
+    console.log(`  ✓ Account: ${acct.company} → ${ref.id}`);
+  }
+
+  // ─── Contacts ──────────────────────────────────────────
   const contactsList = [
-    { accountId: 1, name: "Sarah Mitchell", title: "VP of Marketing", email: "sarah@pinnaclegroup.com", phone: "+1 (404) 555-0123", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=sarah" },
-    { accountId: 1, name: "Robert Nguyen", title: "Brand Director", email: "robert@pinnaclegroup.com", phone: "+1 (404) 555-0124", isPrimary: false, avatar: "https://i.pravatar.cc/150?u=robert" },
-    { accountId: 2, name: "James Ortega", title: "Head of Growth", email: "james@novatech.io", phone: "+1 (512) 555-0201", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=james" },
-    { accountId: 2, name: "Priya Sharma", title: "Content Manager", email: "priya@novatech.io", phone: "+1 (512) 555-0202", isPrimary: false, avatar: "https://i.pravatar.cc/150?u=priya" },
-    { accountId: 3, name: "Lisa Chen", title: "Marketing Director", email: "lisa@meridianlabs.com", phone: "+1 (617) 555-0301", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=lisa" },
-    { accountId: 4, name: "David Park", title: "Founder & CEO", email: "david@crestlinebrands.com", phone: "+1 (720) 555-0401", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=david" },
-    { accountId: 4, name: "Emma Walsh", title: "E-commerce Manager", email: "emma@crestlinebrands.com", phone: "+1 (720) 555-0402", isPrimary: false, avatar: "https://i.pravatar.cc/150?u=emma" },
-    { accountId: 5, name: "Alex Rivera", title: "Managing Partner", email: "alex@vertexsolutions.com", phone: "+1 (214) 555-0501", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=alex" },
-    { accountId: 6, name: "Morgan Hayes", title: "Creative Director", email: "morgan@atlasdigital.com", phone: "+1 (323) 555-0601", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=morgan" },
-    { accountId: 6, name: "Kai Tanaka", title: "Producer", email: "kai@atlasdigital.com", phone: "+1 (323) 555-0602", isPrimary: false, avatar: "https://i.pravatar.cc/150?u=kai" },
-    { accountId: 6, name: "Desiree Okonkwo", title: "Social Media Lead", email: "desiree@atlasdigital.com", phone: "+1 (323) 555-0603", isPrimary: false, avatar: "https://i.pravatar.cc/150?u=desiree" },
-    { accountId: 7, name: "Salvatori Family", title: "Ownership", email: "info@salvatorisitalian.com", phone: "+1 (260) 493-2777", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=salvatori" },
-    { accountId: 8, name: "Taylor Kim", title: "Editor-in-Chief", email: "taylor@bluepeakmedia.com", phone: "+1 (646) 555-0701", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=taylor" },
-    { accountId: 9, name: "Jordan Blake", title: "Co-Founder & CCO", email: "jordan@orioncreative.com", phone: "+1 (415) 555-0801", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=jordan" },
-    { accountId: 9, name: "Camille Durand", title: "Account Director", email: "camille@orioncreative.com", phone: "+1 (415) 555-0802", isPrimary: false, avatar: "https://i.pravatar.cc/150?u=camille" },
+    { accountIdx: 1, name: "Sarah Mitchell", title: "VP of Marketing", email: "sarah@pinnaclegroup.com", phone: "+1 (404) 555-0123", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=sarah" },
+    { accountIdx: 1, name: "Robert Nguyen", title: "Brand Director", email: "robert@pinnaclegroup.com", phone: "+1 (404) 555-0124", isPrimary: false, avatar: "https://i.pravatar.cc/150?u=robert" },
+    { accountIdx: 2, name: "James Ortega", title: "Head of Growth", email: "james@novatech.io", phone: "+1 (512) 555-0201", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=james" },
+    { accountIdx: 2, name: "Priya Sharma", title: "Content Manager", email: "priya@novatech.io", phone: "+1 (512) 555-0202", isPrimary: false, avatar: "https://i.pravatar.cc/150?u=priya" },
+    { accountIdx: 3, name: "Lisa Chen", title: "Marketing Director", email: "lisa@meridianlabs.com", phone: "+1 (617) 555-0301", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=lisa" },
+    { accountIdx: 4, name: "David Park", title: "Founder & CEO", email: "david@crestlinebrands.com", phone: "+1 (720) 555-0401", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=david" },
+    { accountIdx: 4, name: "Emma Walsh", title: "E-commerce Manager", email: "emma@crestlinebrands.com", phone: "+1 (720) 555-0402", isPrimary: false, avatar: "https://i.pravatar.cc/150?u=emma" },
+    { accountIdx: 5, name: "Alex Rivera", title: "Managing Partner", email: "alex@vertexsolutions.com", phone: "+1 (214) 555-0501", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=alex" },
+    { accountIdx: 6, name: "Morgan Hayes", title: "Creative Director", email: "morgan@atlasdigital.com", phone: "+1 (323) 555-0601", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=morgan" },
+    { accountIdx: 6, name: "Kai Tanaka", title: "Producer", email: "kai@atlasdigital.com", phone: "+1 (323) 555-0602", isPrimary: false, avatar: "https://i.pravatar.cc/150?u=kai" },
+    { accountIdx: 6, name: "Desiree Okonkwo", title: "Social Media Lead", email: "desiree@atlasdigital.com", phone: "+1 (323) 555-0603", isPrimary: false, avatar: "https://i.pravatar.cc/150?u=desiree" },
+    { accountIdx: 7, name: "Salvatori Family", title: "Ownership", email: "info@salvatorisitalian.com", phone: "+1 (260) 493-2777", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=salvatori" },
+    { accountIdx: 8, name: "Taylor Kim", title: "Editor-in-Chief", email: "taylor@bluepeakmedia.com", phone: "+1 (646) 555-0701", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=taylor" },
+    { accountIdx: 9, name: "Jordan Blake", title: "Co-Founder & CCO", email: "jordan@orioncreative.com", phone: "+1 (415) 555-0801", isPrimary: true, avatar: "https://i.pravatar.cc/150?u=jordan" },
+    { accountIdx: 9, name: "Camille Durand", title: "Account Director", email: "camille@orioncreative.com", phone: "+1 (415) 555-0802", isPrimary: false, avatar: "https://i.pravatar.cc/150?u=camille" },
   ];
 
-  for (const contact of contactsList) {
-    db.insert(schema.contacts).values(contact as any).run();
+  for (const { accountIdx, ...contactData } of contactsList) {
+    const accountId = accountIdMap[accountIdx];
+    await addDoc(collection(db, "contacts"), {
+      ...contactData,
+      accountId,
+      notes: null,
+      createdAt: serverTimestamp(),
+    });
   }
   console.log("  ✓ Contacts seeded");
 
-  // --- Services ---
+  // ─── Services Catalog ──────────────────────────────────
   const serviceDefs = [
-    { name: "Social Media Management", description: "Full-service social media strategy, content creation, scheduling, and community management across all platforms.", status: "active", clients: 8, pricing: { starter: "$1,500/mo", growth: "$3,000/mo", enterprise: "$5,500/mo" }, margin: 72, sopStatus: "complete", vendors: ["Sprout Social", "Canva Pro", "CapCut"], upsells: ["Paid Social Ads", "Influencer Partnerships"] },
-    { name: "SEO & Content Marketing", description: "Keyword research, on-page optimization, technical SEO audits, blog content creation, and link building campaigns.", status: "active", clients: 5, pricing: { starter: "$2,000/mo", growth: "$4,000/mo", enterprise: "$7,500/mo" }, margin: 68, sopStatus: "complete", vendors: ["Ahrefs", "Surfer SEO", "Clearscope"], upsells: ["Local SEO", "Content Video Production"] },
+    { name: "Social Media Management", description: "Full-service social media strategy, content creation, scheduling, and community management.", status: "active", clients: 8, pricing: { starter: "$1,500/mo", growth: "$3,000/mo", enterprise: "$5,500/mo" }, margin: 72, sopStatus: "complete", vendors: ["Sprout Social", "Canva Pro", "CapCut"], upsells: ["Paid Social Ads", "Influencer Partnerships"] },
+    { name: "SEO & Content Marketing", description: "Keyword research, on-page optimization, technical SEO audits, blog content creation, and link building.", status: "active", clients: 5, pricing: { starter: "$2,000/mo", growth: "$4,000/mo", enterprise: "$7,500/mo" }, margin: 68, sopStatus: "complete", vendors: ["Ahrefs", "Surfer SEO", "Clearscope"], upsells: ["Local SEO", "Content Video Production"] },
     { name: "Paid Advertising (PPC)", description: "Google Ads, Meta Ads, and LinkedIn Ads campaign management with full creative, targeting, and reporting.", status: "active", clients: 6, pricing: { starter: "$2,500/mo + ad spend", growth: "$4,500/mo + ad spend", enterprise: "$8,000/mo + ad spend" }, margin: 65, sopStatus: "in-progress", vendors: ["Google Ads", "Meta Business Suite", "Triple Whale"], upsells: ["Landing Page Design", "CRO Audit"] },
     { name: "Email Marketing & Automation", description: "Email campaign strategy, template design, automation workflows, list segmentation, and performance optimization.", status: "active", clients: 4, pricing: { starter: "$1,200/mo", growth: "$2,500/mo", enterprise: "$4,500/mo" }, margin: 78, sopStatus: "complete", vendors: ["Klaviyo", "Mailchimp", "Litmus"], upsells: ["SMS Marketing", "Customer Journey Mapping"] },
-    { name: "Web Design & Development", description: "Custom website design, development, and maintenance using modern frameworks. Includes UX audit and conversion optimization.", status: "active", clients: 3, pricing: { project: "$8,000–$25,000", retainer: "$2,000/mo" }, margin: 60, sopStatus: "in-progress", vendors: ["Figma", "Webflow", "Vercel"], upsells: ["Monthly Maintenance", "A/B Testing"] },
+    { name: "Web Design & Development", description: "Custom website design, development, and maintenance using modern frameworks.", status: "active", clients: 3, pricing: { project: "$8,000–$25,000", retainer: "$2,000/mo" }, margin: 60, sopStatus: "in-progress", vendors: ["Figma", "Webflow", "Vercel"], upsells: ["Monthly Maintenance", "A/B Testing"] },
   ];
 
-  sqlite.exec("DELETE FROM services_catalog");
   for (const svc of serviceDefs) {
-    db.insert(schema.servicesCatalog).values(svc as any).run();
+    await addDoc(collection(db, "services_catalog"), svc);
   }
   console.log("  ✓ Services seeded");
 
-  // --- Activity ---
+  // ─── Activity Log ──────────────────────────────────────
   const activities = [
     { agentId: "accounts", action: "draft_communication", metadata: { client: "Pinnacle Group", subject: "Q2 Strategy Sync" } },
     { agentId: "accounts", action: "suggest_upsell", metadata: { client: "Crestline Brands", service: "Email Marketing" } },
@@ -271,14 +231,19 @@ async function seed() {
     { agentId: "financials", action: "margin_analysis", metadata: { avgMargin: "54.4%", target: "60%" } },
   ];
 
-  sqlite.exec("DELETE FROM activity_log");
   for (const act of activities) {
-    db.insert(schema.activityLog).values(act as any).run();
+    await addDoc(collection(db, "activity_log"), {
+      ...act,
+      createdAt: serverTimestamp(),
+    });
   }
   console.log("  ✓ Activity log seeded");
 
-  console.log("Database seeded successfully!");
-  sqlite.close();
+  console.log("\nFirestore seeded successfully!");
+  process.exit(0);
 }
 
-seed().catch(console.error);
+seed().catch((err) => {
+  console.error("Seed failed:", err);
+  process.exit(1);
+});
