@@ -10,7 +10,9 @@
 import { readFileSync } from "fs";
 import admin from "firebase-admin";
 
-const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "ai-designer-b3ea6";
+import "dotenv/config";
+
+const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || "";
 
 const ROLES = ["admin", "team_member"] as const;
 type Role = (typeof ROLES)[number];

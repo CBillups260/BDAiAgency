@@ -5,16 +5,7 @@ import {
   addDoc,
   serverTimestamp,
 } from "firebase/firestore";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyAkvNPMQ5UPnUcmXXfR9bRxGGRsxKarvr0",
-  authDomain: "ai-designer-b3ea6.firebaseapp.com",
-  projectId: "ai-designer-b3ea6",
-  storageBucket: "ai-designer-b3ea6.firebasestorage.app",
-  messagingSenderId: "309126109469",
-  appId: "1:309126109469:web:781b7beaaf4900bcf1e9f4",
-  measurementId: "G-P9CMTRVVHR",
-};
+import { firebaseConfig } from "./firebase-config";
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);

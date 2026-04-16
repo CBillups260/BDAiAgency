@@ -5,13 +5,13 @@ import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getAnalytics, isSupported } from "firebase/analytics";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAkvNPMQ5UPnUcmXXfR9bRxGGRsxKarvr0",
-  authDomain: "ai-designer-b3ea6.firebaseapp.com",
-  projectId: "ai-designer-b3ea6",
-  storageBucket: "ai-designer-b3ea6.firebasestorage.app",
-  messagingSenderId: "309126109469",
-  appId: "1:309126109469:web:781b7beaaf4900bcf1e9f4",
-  measurementId: "G-P9CMTRVVHR",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
 /** Shown on access troubleshooting; must match the project where `team_members` lives. */
