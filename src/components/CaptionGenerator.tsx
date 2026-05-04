@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   Star,
@@ -101,22 +102,18 @@ export default function CaptionGenerator() {
   const [result, setResult] = useState<CaptionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [showOptions, setShowOptions] = useState(false);
+  const [showOptions, setShowOptions] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId) || null;
   const activePlatform = PLATFORMS.find((p) => p.id === platform)!;
-
-  // -- Auto-generate: ref-based trigger to avoid stale closures in useEffect --
-  const pendingGenRef = useRef(false);
-  const generateRef = useRef<(() => Promise<void>) | null>(null);
 
   const handleGenerate = useCallback(async () => {
     if (!selectedAccount || !mediaFiles.length) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/content/generate-caption', {
+      const res = await authedFetch('/api/content/generate-caption', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -154,15 +151,6 @@ export default function CaptionGenerator() {
       setLoading(false);
     }
   }, [selectedAccount, mediaFiles, platform, captionStyle, context, includeHashtags, includeEmojis]);
-
-  generateRef.current = handleGenerate;
-
-  useEffect(() => {
-    if (pendingGenRef.current && mediaFiles.length > 0 && selectedAccount && !loading) {
-      pendingGenRef.current = false;
-      generateRef.current?.();
-    }
-  }, [mediaFiles, selectedAccount, loading]);
 
   const processFiles = useCallback(async (files: FileList | File[]) => {
     const newFiles: MediaFile[] = [];
@@ -205,7 +193,6 @@ export default function CaptionGenerator() {
       newFiles.push({ base64, mimeType: file.type, name: file.name, preview, size: file.size });
     }
     if (newFiles.length > 0) {
-      pendingGenRef.current = true;
       setMediaFiles((prev) => [...prev, ...newFiles]);
       setError(null);
     }
@@ -332,10 +319,10 @@ export default function CaptionGenerator() {
                   />
                   <Upload size={32} className="mx-auto mb-3 text-zinc-500" />
                   <p className="text-sm text-zinc-400 mb-1">
-                    Drop an image or video and captions will generate automatically
+                    Drop an image or video to get started
                   </p>
                   <p className="text-[10px] text-zinc-600">
-                    Images &middot; Video &middot; Audio &middot; PDF &mdash; AI analyzes your content + brand context
+                    Images &middot; Video &middot; Audio &middot; PDF &mdash; add context and pick a style below, then generate
                   </p>
                   <p className="text-[10px] text-zinc-500 mt-2">
                     or press <kbd className="px-1.5 py-0.5 rounded bg-[#1a1a2e] border border-[#27273A] text-zinc-400 font-mono text-[9px]">&#8984;V</kbd> to paste from clipboard
@@ -381,7 +368,11 @@ export default function CaptionGenerator() {
                         <Check size={12} />
                         {result.captions.length} captions ready
                       </p>
-                    ) : null}
+                    ) : (
+                      <p className="text-xs text-zinc-500">
+                        Add any context below, pick a style, then generate.
+                      </p>
+                    )}
 
                     <div className="flex items-center gap-2 pt-1">
                       <button
@@ -390,14 +381,13 @@ export default function CaptionGenerator() {
                       >
                         + Add more
                       </button>
-                      {result && !loading && (
-                        <button
-                          onClick={handleGenerate}
-                          className="text-[10px] text-purple-400 hover:text-purple-300 transition-colors px-2 py-1 rounded-lg border border-purple-500/20 hover:bg-purple-500/10 flex items-center gap-1"
-                        >
-                          <RefreshCw size={10} /> Regenerate
-                        </button>
-                      )}
+                      <button
+                        onClick={handleGenerate}
+                        disabled={loading}
+                        className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-purple-500 text-[11px] text-white font-medium hover:from-purple-500 hover:to-purple-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {result ? <><RefreshCw size={11} /> Regenerate</> : <><Star size={11} /> Generate Captions</>}
+                      </button>
                     </div>
                   </div>
                 </div>

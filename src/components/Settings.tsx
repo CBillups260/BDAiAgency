@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import { useState, useEffect, useRef } from "react";
 import { motion } from "motion/react";
 import {
@@ -444,7 +445,7 @@ export default function Settings({ user }: SettingsProps) {
                 setGhlLookupLoading(true);
                 setGhlLookupError(null);
                 try {
-                  const res = await fetch("/api/ghl/location-users", {
+                  const res = await authedFetch("/api/ghl/location-users", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({

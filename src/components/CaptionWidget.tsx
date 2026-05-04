@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useCallback } from 'react';
 import {
   Type,
@@ -62,7 +63,7 @@ export default function CaptionWidget({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/content/generate-caption', {
+      const res = await authedFetch('/api/content/generate-caption', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

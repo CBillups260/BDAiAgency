@@ -15,8 +15,6 @@ import AuthGateLoader from './components/AuthGateLoader';
 import { useAuth } from './hooks/useAuth';
 import { useTeamMemberProfile } from './hooks/useTeamMemberProfile';
 import { APP_ROLES, type AppUserRole } from './lib/userRoles';
-import { useAgents, useActivityFeed, useChat, useTaskUpdates } from './hooks/useApi';
-import { useFirestoreAccounts } from './hooks/useFirestore';
 import { syncTeamMember } from './hooks/useScheduleHandoffs';
 import {
   Layout,
@@ -274,23 +272,18 @@ function AuthenticatedApp({
     }
   }, [role, activeTab]);
 
-  // ─── API Hooks ──────────────────────────────────────────
-  const { agents: apiAgents, toggleAgent: apiToggleAgent } = useAgents();
-  const activityItems = useActivityFeed(20);
-  const accountsChat = useChat('accounts');
-  const { accounts: apiAccounts } = useFirestoreAccounts();
-  const currentTasks = useTaskUpdates();
+  // ─── Local UI state (no backend agent system yet) ───────
+  const activityItems: any[] = [];
+  const accountsChat = {
+    messages: [] as { role: 'user' | 'assistant'; content: string }[],
+    loading: false,
+    sendMessage: (_msg: string) => { /* AI Account Agent chat is not yet wired up. */ },
+  };
+  const currentTasks: Record<string, string> = {};
 
   useEffect(() => {
     void syncTeamMember(user);
   }, [user.uid, user.displayName, user.email, user.photoURL]);
-
-  // Sync API agent states into local state
-  useEffect(() => {
-    if (apiAgents.length > 0) {
-      setAgentStates(Object.fromEntries(apiAgents.map(a => [a.id, a.enabled])));
-    }
-  }, [apiAgents]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -306,9 +299,7 @@ function AuthenticatedApp({
   const activeAgentCount = Object.values(agentStates).filter(Boolean).length;
   const toggleAgent = (id: string) => {
     if (id === 'orchestrator') return; // Can't disable orchestrator
-    const newState = !agentStates[id];
-    setAgentStates(prev => ({ ...prev, [id]: newState }));
-    apiToggleAgent(id, newState);
+    setAgentStates(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
   const handleCopy = (id: number) => {

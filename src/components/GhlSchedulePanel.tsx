@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Calendar,
@@ -12,7 +13,7 @@ import {
   Image as ImageIcon,
 } from "@geist-ui/icons";
 import { motion } from "motion/react";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL, getBlob } from "firebase/storage";
 import { storage } from "../lib/firebase";
 import { useFirestoreAccounts, useBusinessSettings } from "../hooks/useFirestore";
 import { getGhlLocationId, getGhlPrivateIntegrationToken } from "../lib/utils";
@@ -302,11 +303,16 @@ export default function GhlSchedulePanel() {
 
   /** All CRM accounts (not only GHL-linked) so handoffs can pre-select any client. */
   const schedulerClientOptions = useMemo(() => {
-    return [...firestoreAccounts].sort((a, b) =>
+    const sorted = [...firestoreAccounts].sort((a, b) =>
       (a.company || a.name || "").localeCompare(b.company || b.name || "", undefined, {
         sensitivity: "base",
       })
     );
+    return {
+      connected: sorted.filter((a) => !!getGhlLocationId(a)),
+      unconnected: sorted.filter((a) => !getGhlLocationId(a)),
+      all: sorted,
+    };
   }, [firestoreAccounts]);
 
   const [selectedClientId, setSelectedClientId] = useState("");
@@ -363,7 +369,7 @@ export default function GhlSchedulePanel() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/ghl/status");
+        const res = await authedFetch("/api/ghl/status");
         const data = (await res.json()) as { configured?: boolean; hasEnvUserId?: boolean; message?: string };
         if (cancelled) return;
         setStatus({
@@ -439,7 +445,7 @@ export default function GhlSchedulePanel() {
     setLoadingAccounts(true);
     setError(null);
     try {
-      const res = await fetch("/api/ghl/accounts", {
+      const res = await authedFetch("/api/ghl/accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ locationId: effectiveLocationId.trim(), ...ghlAuthPayload }),
@@ -477,7 +483,7 @@ export default function GhlSchedulePanel() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/ghl/location-meta", {
+        const res = await authedFetch("/api/ghl/location-meta", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -512,7 +518,7 @@ export default function GhlSchedulePanel() {
     setCalendarLoading(true);
     (async () => {
       try {
-        const res = await fetch("/api/ghl/posts/list", {
+        const res = await authedFetch("/api/ghl/posts/list", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -680,6 +686,26 @@ export default function GhlSchedulePanel() {
       setSuggestedAt(null);
       setSuggestReason(null);
       setError(null);
+
+      if (h.imageStoragePath) {
+        try {
+          const blob = await getBlob(ref(storage, h.imageStoragePath));
+          const mime = blob.type?.startsWith("image/") ? blob.type : "image/jpeg";
+          const b64 = await new Promise<string>((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = () => {
+              const s = r.result as string;
+              resolve(s.includes(",") ? s.split(",")[1] : s);
+            };
+            r.onerror = () => reject(new Error("read failed"));
+            r.readAsDataURL(blob);
+          });
+          setScheduleImageDataBase64(b64);
+          setScheduleImageDataMimeType(mime);
+        } catch {
+          // base64 unavailable — CaptionGeneratorMini falls back to URL fetch
+        }
+      }
     },
     [firestoreAccounts]
   );
@@ -735,7 +761,7 @@ export default function GhlSchedulePanel() {
     setSuggestedAt(null);
     setSuggestReason(null);
     try {
-      const res = await fetch("/api/ghl/suggest-schedule", {
+      const res = await authedFetch("/api/ghl/suggest-schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -774,7 +800,7 @@ export default function GhlSchedulePanel() {
     setSuggestedAt(null);
     setSuggestReason(null);
     try {
-      const suggestRes = await fetch("/api/ghl/suggest-schedule", {
+      const suggestRes = await authedFetch("/api/ghl/suggest-schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -793,7 +819,7 @@ export default function GhlSchedulePanel() {
       setSuggestedAt(when);
       setSuggestReason(typeof suggestData.reason === "string" ? suggestData.reason : null);
 
-      const schedRes = await fetch("/api/ghl/schedule", {
+      const schedRes = await authedFetch("/api/ghl/schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -847,7 +873,7 @@ export default function GhlSchedulePanel() {
     setScheduling(true);
     setError(null);
     try {
-      const res = await fetch("/api/ghl/schedule", {
+      const res = await authedFetch("/api/ghl/schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1099,14 +1125,26 @@ export default function GhlSchedulePanel() {
               className={inputClass}
             >
               <option value="">{fsLoading ? "Loading…" : "— Choose a client —"}</option>
-              {schedulerClientOptions.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.company || a.name}
-                  {!getGhlLocationId(a) ? " · (no GHL linked)" : ""}
-                </option>
-              ))}
+              {schedulerClientOptions.connected.length > 0 && (
+                <optgroup label="✓ Connected — ready to schedule">
+                  {schedulerClientOptions.connected.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.company || a.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {schedulerClientOptions.unconnected.length > 0 && (
+                <optgroup label="No GHL connection">
+                  {schedulerClientOptions.unconnected.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.company || a.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
-            {!fsLoading && schedulerClientOptions.length === 0 && (
+            {!fsLoading && schedulerClientOptions.all.length === 0 && (
               <p className="text-xs text-amber-400/90 mt-2">
                 No clients in Accounts yet. Add clients under Accounts to schedule posts.
               </p>

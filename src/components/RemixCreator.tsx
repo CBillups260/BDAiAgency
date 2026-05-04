@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Loader,
@@ -277,7 +278,7 @@ export default function RemixCreator() {
     setStage('analyzing');
     setError(null);
     try {
-      const res = await fetch('/api/content/analyze-graphic', {
+      const res = await authedFetch('/api/content/analyze-graphic', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: inputGraphic.base64, imageMimeType: inputGraphic.mimeType }),
@@ -309,7 +310,7 @@ export default function RemixCreator() {
 
       // Auto-analyze
       try {
-        const res = await fetch('/api/content/analyze-asset', {
+        const res = await authedFetch('/api/content/analyze-asset', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ imageBase64: base64, imageMimeType: file.type }),
@@ -349,7 +350,7 @@ export default function RemixCreator() {
         logoData = { base64: logo.split(',')[1], mimeType: logo.split(';')[0].split(':')[1] };
       } else {
         try {
-          const res = await fetch(`/api/content/image-proxy?url=${encodeURIComponent(logo)}`);
+          const res = await authedFetch(`/api/content/image-proxy?url=${encodeURIComponent(logo)}`);
           const blob = await res.blob();
           const reader = new FileReader();
           const dataUrl: string = await new Promise(resolve => { reader.onload = () => resolve(reader.result as string); reader.readAsDataURL(blob); });
@@ -366,7 +367,7 @@ export default function RemixCreator() {
       } else if (rep.image.preview) {
         // Fetch from URL
         try {
-          const res = await fetch(`/api/content/image-proxy?url=${encodeURIComponent(rep.image.preview)}`);
+          const res = await authedFetch(`/api/content/image-proxy?url=${encodeURIComponent(rep.image.preview)}`);
           const blob = await res.blob();
           const reader = new FileReader();
           const dataUrl: string = await new Promise(resolve => { reader.onload = () => resolve(reader.result as string); reader.readAsDataURL(blob); });
@@ -376,7 +377,7 @@ export default function RemixCreator() {
     }
 
     try {
-      const res = await fetch('/api/content/remix-graphic', {
+      const res = await authedFetch('/api/content/remix-graphic', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -419,7 +420,7 @@ export default function RemixCreator() {
     if (!result || !selectedAccountId || saving) return;
     setSaving(true);
     try {
-      const analysisRes = await fetch('/api/content/analyze-asset', {
+      const analysisRes = await authedFetch('/api/content/analyze-asset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: result.base64, imageMimeType: result.mimeType }),

@@ -163,14 +163,25 @@ export default function Tasks({ user }: TasksProps) {
     );
   }, [accounts]);
 
+  const connectedAccounts = useMemo(
+    () => sortedAccounts.filter((a) => !!a.ghlLocationId?.trim()),
+    [sortedAccounts]
+  );
+  const unconnectedAccounts = useMemo(
+    () => sortedAccounts.filter((a) => !a.ghlLocationId?.trim()),
+    [sortedAccounts]
+  );
+
   const filteredAccounts = useMemo(() => {
     const q = accountQuery.trim().toLowerCase();
-    if (!q) return sortedAccounts;
-    return sortedAccounts.filter((a) => {
+    const match = (a: FirestoreAccount) => {
       const hay = `${a.company || ""} ${a.name || ""} ${a.email || ""} ${a.id}`.toLowerCase();
       return hay.includes(q);
-    });
-  }, [sortedAccounts, accountQuery]);
+    };
+    const fc = q ? connectedAccounts.filter(match) : connectedAccounts;
+    const fu = q ? unconnectedAccounts.filter(match) : unconnectedAccounts;
+    return { connected: fc, unconnected: fu, total: fc.length + fu.length };
+  }, [connectedAccounts, unconnectedAccounts, accountQuery]);
 
   const selectedClientAccount: FirestoreAccount | undefined = useMemo(
     () => accounts.find((a) => a.id === clientAccountId),
@@ -403,45 +414,104 @@ export default function Tasks({ user }: TasksProps) {
               />
             </div>
             <div className="rounded-xl border border-[#27273A] bg-[#0A0A0F] overflow-hidden">
-              <div className="max-h-48 overflow-y-auto divide-y divide-[#27273A]/80">
+              <div className="max-h-48 overflow-y-auto">
                 {accountsLoading ? (
                   <div className="flex items-center gap-2 text-zinc-500 text-sm px-4 py-6 justify-center">
                     <Loader size={16} className="animate-spin" /> Loading clients…
                   </div>
-                ) : filteredAccounts.length === 0 ? (
+                ) : filteredAccounts.total === 0 ? (
                   <p className="text-sm text-zinc-500 px-4 py-6 text-center">
                     {sortedAccounts.length === 0
                       ? "No accounts yet. Add clients under Accounts."
                       : "No matches — try another search."}
                   </p>
                 ) : (
-                  filteredAccounts.map((a) => {
-                    const selected = clientAccountId === a.id;
-                    return (
-                      <button
-                        key={a.id}
-                        type="button"
-                        onClick={() => {
-                          if (handoffMode === "bulk" && clientAccountId !== a.id && bulkFiles.length > 0) {
-                            revokeBulkPreviews();
-                            setBulkFiles([]);
-                            if (bulkInputRef.current) bulkInputRef.current.value = "";
-                          }
-                          setClientAccountId(a.id);
-                        }}
-                        className={`w-full flex flex-col items-start gap-0.5 px-3 py-2.5 text-left text-sm transition-colors ${
-                          selected
-                            ? "bg-purple-500/15 text-white border-l-2 border-purple-500"
-                            : "text-zinc-300 hover:bg-[#12121A] border-l-2 border-transparent"
-                        }`}
-                      >
-                        <span className="font-medium truncate w-full">{accountLabel(a)}</span>
-                        {a.name && a.company && a.name !== a.company && (
-                          <span className="text-[11px] text-zinc-500 truncate w-full">{a.name}</span>
-                        )}
-                      </button>
-                    );
-                  })
+                  <>
+                    {filteredAccounts.connected.length > 0 && (
+                      <>
+                        <div className="sticky top-0 z-10 px-3 py-1.5 bg-emerald-500/[0.08] border-b border-emerald-500/20">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
+                            Connected — ready to schedule
+                          </span>
+                        </div>
+                        <div className="divide-y divide-[#27273A]/80">
+                          {filteredAccounts.connected.map((a) => {
+                            const selected = clientAccountId === a.id;
+                            return (
+                              <button
+                                key={a.id}
+                                type="button"
+                                onClick={() => {
+                                  if (handoffMode === "bulk" && clientAccountId !== a.id && bulkFiles.length > 0) {
+                                    revokeBulkPreviews();
+                                    setBulkFiles([]);
+                                    if (bulkInputRef.current) bulkInputRef.current.value = "";
+                                  }
+                                  setClientAccountId(a.id);
+                                }}
+                                className={`w-full flex flex-col items-start gap-0.5 px-3 py-2.5 text-left text-sm transition-colors ${
+                                  selected
+                                    ? "bg-purple-500/15 text-white border-l-2 border-purple-500"
+                                    : "text-zinc-300 hover:bg-[#12121A] border-l-2 border-transparent"
+                                }`}
+                              >
+                                <span className="font-medium truncate w-full flex items-center gap-2">
+                                  {accountLabel(a)}
+                                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                                </span>
+                                {a.name && a.company && a.name !== a.company && (
+                                  <span className="text-[11px] text-zinc-500 truncate w-full">{a.name}</span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                    {filteredAccounts.connected.length > 0 && filteredAccounts.unconnected.length > 0 && (
+                      <div className="border-y border-[#27273A] bg-[#0A0A0F]">
+                        <div className="h-px bg-gradient-to-r from-transparent via-zinc-700/60 to-transparent" />
+                      </div>
+                    )}
+                    {filteredAccounts.unconnected.length > 0 && (
+                      <>
+                        <div className="sticky top-0 z-10 px-3 py-1.5 bg-zinc-800/40 border-b border-[#27273A]">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                            No connection — set up in Accounts
+                          </span>
+                        </div>
+                        <div className="divide-y divide-[#27273A]/80">
+                          {filteredAccounts.unconnected.map((a) => {
+                            const selected = clientAccountId === a.id;
+                            return (
+                              <button
+                                key={a.id}
+                                type="button"
+                                onClick={() => {
+                                  if (handoffMode === "bulk" && clientAccountId !== a.id && bulkFiles.length > 0) {
+                                    revokeBulkPreviews();
+                                    setBulkFiles([]);
+                                    if (bulkInputRef.current) bulkInputRef.current.value = "";
+                                  }
+                                  setClientAccountId(a.id);
+                                }}
+                                className={`w-full flex flex-col items-start gap-0.5 px-3 py-2.5 text-left text-sm transition-colors ${
+                                  selected
+                                    ? "bg-purple-500/15 text-white border-l-2 border-purple-500"
+                                    : "text-zinc-400 hover:bg-[#12121A] border-l-2 border-transparent opacity-75 hover:opacity-100"
+                                }`}
+                              >
+                                <span className="font-medium truncate w-full">{accountLabel(a)}</span>
+                                {a.name && a.company && a.name !== a.company && (
+                                  <span className="text-[11px] text-zinc-500 truncate w-full">{a.name}</span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </>
                 )}
               </div>
             </div>

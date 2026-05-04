@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Loader,
@@ -27,39 +28,26 @@ type AssetCategory = 'food' | 'product';
 const FOOD_MODES = [
   { id: 'isolate', label: 'Isolate', sub: 'Extract & render on solid bg', requiresRef: true },
   { id: 'variation', label: 'Variation', sub: 'Inspired by reference, with changes', requiresRef: true },
+  { id: 'subtle-variations', label: 'Subtle Variations', sub: 'Tiny camera nudges, same core shot', requiresRef: true },
   { id: 'full', label: 'Full Asset', sub: 'Solid background, clean edges' },
-  { id: 'macro', label: 'Macro Shot', sub: 'Extreme close-up detail' },
-  { id: 'lifestyle', label: 'Lifestyle', sub: 'Real setting with props & context' },
-  { id: 'flat-lay', label: 'Flat Lay', sub: 'Overhead styled arrangement' },
-  { id: 'editorial', label: 'Editorial', sub: 'Magazine-quality, polished' },
-  { id: 'dark-moody', label: 'Dark & Moody', sub: 'Deep shadows, chiaroscuro' },
-  { id: 'bright-airy', label: 'Bright & Airy', sub: 'High-key, soft, luminous' },
-  { id: 'action', label: 'Action Shot', sub: 'Pouring, drizzling, motion' },
-  { id: 'rustic', label: 'Rustic', sub: 'Wood, linen, farmhouse feel' },
-  { id: 'minimalist', label: 'Minimalist', sub: 'Clean, simple, negative space' },
-  { id: 'street-food', label: 'Street Food', sub: 'Casual, handheld, outdoor' },
-  { id: 'fine-dining', label: 'Fine Dining', sub: 'Elegant plating, upscale' },
-  { id: 'ingredients', label: 'Ingredients', sub: 'Raw components, deconstructed' },
-  { id: 'process', label: 'Process', sub: "Chef's hands, cooking in action" },
-  { id: 'portrait', label: 'Portrait Style', sub: 'Dish as subject, blurred BG' },
-  { id: 'steam-sizzle', label: 'Steam & Sizzle', sub: 'Hot, fresh, just-cooked energy' },
-  { id: 'messy', label: 'Messy & Real', sub: 'Bites taken, sauce drips, lived-in' },
-  { id: 'table-spread', label: 'Table Spread', sub: 'Full table, multiple dishes' },
-  { id: 'smoke-fire', label: 'Smoke & Fire', sub: 'Grill marks, open flame, BBQ' },
-  { id: 'drizzle-pour', label: 'Drizzle / Pour', sub: 'Honey drip, sauce pour, frozen in time' },
-  { id: 'stack-tower', label: 'Stack / Tower', sub: 'Stacked layers, height drama' },
-  { id: 'bokeh', label: 'Bokeh', sub: 'Ultra-shallow DOF, dreamy blur' },
-  { id: 'noir', label: 'Noir', sub: 'Black & white, high contrast' },
-  { id: 'neon-night', label: 'Neon Night', sub: 'Late-night eats, neon bar glow' },
-  { id: 'deconstructed', label: 'Deconstructed', sub: 'Each element separated artistically' },
-  { id: 'comfort-cozy', label: 'Comfort Cozy', sub: 'Warm tones, inviting, homestyle' },
-  { id: 'frozen-ice', label: 'Frozen / Ice', sub: 'Ice cream drips, frozen textures' },
-  { id: 'charcuterie', label: 'Charcuterie', sub: 'Board spread, grazing table' },
+  { id: 'macro', label: 'Macro Shot', sub: 'Extreme close-up, fills the frame' },
+  { id: 'detail', label: 'Detail Crop', sub: 'Tight crop on a feature, less than macro' },
+  { id: 'closeup', label: 'Close-Up', sub: 'Subject fills frame, no surroundings' },
+  { id: 'mcu', label: 'Medium Close-Up', sub: 'Subject + small ring of context' },
+  { id: 'medium', label: 'Medium Shot', sub: 'Subject with plate & immediate context' },
+  { id: 'wide', label: 'Wide / Pulled-Back', sub: 'Full scene, subject in environment' },
+  { id: 'overhead', label: 'Overhead', sub: 'Top-down framing, no restyling' },
+  { id: 'high45', label: 'High Angle (45°)', sub: 'Classic 3/4-down food angle' },
+  { id: 'threequarter', label: '3/4 View', sub: 'Front + side, adds depth & dimension' },
+  { id: 'eye', label: 'Eye Level', sub: 'Straight-on, directly facing subject' },
+  { id: 'side', label: 'Side Profile', sub: 'Straight side, shows layers & height' },
+  { id: 'low-angle', label: 'Hero / Low Angle', sub: 'Looking up, makes subject feel grand' },
 ];
 
 const PRODUCT_MODES = [
   { id: 'isolate', label: 'Isolate', sub: 'Extract & render on solid bg', requiresRef: true },
   { id: 'variation', label: 'Variation', sub: 'Inspired by reference, with changes', requiresRef: true },
+  { id: 'subtle-variations', label: 'Subtle Variations', sub: 'Tiny camera nudges, same core shot', requiresRef: true },
   { id: 'full', label: 'Full Asset', sub: 'Solid background, clean edges' },
   { id: 'macro', label: 'Macro Shot', sub: 'Extreme close-up on material & detail' },
   { id: 'hero', label: 'Hero Shot', sub: 'Single product, dramatic staging' },
@@ -87,31 +75,39 @@ const PRODUCT_MODES = [
   { id: 'outdoor-nature', label: 'Outdoor / Nature', sub: 'Product in natural setting' },
 ];
 
+// Shot-type modes own the camera framing/distance/angle. When one of these is selected,
+// the Angle selector hides any options that would conflict (e.g. picking "Overhead" mode
+// + "Side Profile" angle is contradictory) and only shows pure compositional/POV modifiers.
+const SHOT_TYPE_MODES = new Set([
+  'macro', 'detail', 'closeup', 'mcu', 'medium', 'wide',
+  'overhead', 'high45', 'threequarter', 'eye', 'side', 'low-angle',
+]);
+
 const FOOD_ANGLES = [
-  { id: '', label: 'Default' },
-  { id: 'Straight-on front view, eye level', label: 'Eye Level' },
-  { id: '45-degree angle, slightly above, classic food photography', label: '45° Classic' },
-  { id: 'Three-quarter angle showing depth and dimension', label: '3/4 View' },
-  { id: 'Top-down overhead flat lay view, directly above', label: 'Top Down' },
-  { id: 'Side profile view, straight on, showing layers and height', label: 'Side Profile' },
-  { id: 'Low angle, looking up at the dish, hero shot', label: 'Low Angle' },
-  { id: 'High angle, looking down at roughly 60 degrees', label: 'High Angle' },
-  { id: 'Dutch angle, slightly tilted camera for dynamic tension', label: 'Dutch Tilt' },
-  { id: 'Extreme low angle from table level, worms eye view', label: "Worm's Eye" },
-  { id: 'Over the shoulder perspective, diner POV', label: 'Over Shoulder' },
-  { id: 'Slight birds eye view, 75-degree downward angle', label: "Bird's Eye" },
-  { id: 'Diagonal composition, dynamic angled perspective', label: 'Diagonal' },
-  { id: 'Close-up detail shot, shallow depth of field, tight framing', label: 'Close-Up' },
-  { id: 'Straight-on front view, slightly below eye level', label: 'Below Eye' },
-  { id: 'Dramatic upward angle, making dish look grand and imposing', label: 'Hero Shot' },
-  { id: 'Pulled back wide angle showing full table and surroundings', label: 'Wide Establishing' },
-  { id: 'Tilt-shift perspective, miniature effect, selective focus', label: 'Tilt Shift' },
-  { id: 'Directly from behind the dish, showing depth toward camera', label: 'Rear View' },
-  { id: 'Fork or spoon lifting a bite, mid-action angle', label: 'Bite Lift' },
-  { id: 'Looking down the length of a long table, vanishing point', label: 'Table Length' },
-  { id: 'Shooting through foreground elements like glasses or candles', label: 'Shoot-Through' },
-  { id: 'Cross-section, sliced in half revealing internal layers', label: 'Cross Section' },
-  { id: 'Handheld casual angle, slightly off-axis, candid feeling', label: 'Handheld Casual' },
+  { id: '', label: 'Default', compatibleWithShotType: true },
+  { id: 'Straight-on front view, eye level', label: 'Eye Level', compatibleWithShotType: false },
+  { id: '45-degree angle, slightly above, classic food photography', label: '45° Classic', compatibleWithShotType: false },
+  { id: 'Three-quarter angle showing depth and dimension', label: '3/4 View', compatibleWithShotType: false },
+  { id: 'Top-down overhead flat lay view, directly above', label: 'Top Down', compatibleWithShotType: false },
+  { id: 'Side profile view, straight on, showing layers and height', label: 'Side Profile', compatibleWithShotType: false },
+  { id: 'Low angle, looking up at the dish, hero shot', label: 'Low Angle', compatibleWithShotType: false },
+  { id: 'High angle, looking down at roughly 60 degrees', label: 'High Angle', compatibleWithShotType: false },
+  { id: 'Dutch angle, slightly tilted camera for dynamic tension', label: 'Dutch Tilt', compatibleWithShotType: true },
+  { id: 'Extreme low angle from table level, worms eye view', label: "Worm's Eye", compatibleWithShotType: false },
+  { id: 'Over the shoulder perspective, diner POV', label: 'Over Shoulder', compatibleWithShotType: true },
+  { id: 'Slight birds eye view, 75-degree downward angle', label: "Bird's Eye", compatibleWithShotType: false },
+  { id: 'Diagonal composition, dynamic angled perspective', label: 'Diagonal', compatibleWithShotType: true },
+  { id: 'Close-up detail shot, shallow depth of field, tight framing', label: 'Close-Up', compatibleWithShotType: false },
+  { id: 'Straight-on front view, slightly below eye level', label: 'Below Eye', compatibleWithShotType: false },
+  { id: 'Dramatic upward angle, making dish look grand and imposing', label: 'Hero Shot', compatibleWithShotType: false },
+  { id: 'Pulled back wide angle showing full table and surroundings', label: 'Wide Establishing', compatibleWithShotType: false },
+  { id: 'Tilt-shift perspective, miniature effect, selective focus', label: 'Tilt Shift', compatibleWithShotType: true },
+  { id: 'Directly from behind the dish, showing depth toward camera', label: 'Rear View', compatibleWithShotType: true },
+  { id: 'Fork or spoon lifting a bite, mid-action angle', label: 'Bite Lift', compatibleWithShotType: true },
+  { id: 'Looking down the length of a long table, vanishing point', label: 'Table Length', compatibleWithShotType: true },
+  { id: 'Shooting through foreground elements like glasses or candles', label: 'Shoot-Through', compatibleWithShotType: true },
+  { id: 'Cross-section, sliced in half revealing internal layers', label: 'Cross Section', compatibleWithShotType: true },
+  { id: 'Handheld casual angle, slightly off-axis, candid feeling', label: 'Handheld Casual', compatibleWithShotType: true },
 ];
 
 const PRODUCT_ANGLES = [
@@ -133,55 +129,97 @@ const PRODUCT_ANGLES = [
   { id: 'Dramatic upward angle, making product look grand and premium', label: 'Hero Shot' },
 ];
 
-const CAMERAS = [
+const CAMERA_BODIES = [
   { id: '', label: 'Default' },
   // ── Smartphones ──
-  { id: 'Taken on iPhone 16 Pro Max with 48MP main sensor, ProRAW processing', label: 'iPhone 16 Pro' },
-  { id: 'Taken on iPhone 15 Pro Max, 24mm main camera', label: 'iPhone 15 Pro' },
+  { id: 'Shot on iPhone 16 Pro Max with 48MP main sensor and ProRAW processing', label: 'iPhone 16 Pro' },
+  { id: 'Shot on iPhone 15 Pro Max', label: 'iPhone 15 Pro' },
   { id: 'Shot on Samsung Galaxy S24 Ultra with 200MP sensor, crisp detail', label: 'Galaxy S24 Ultra' },
   { id: 'Shot on Google Pixel 9 Pro with computational photography, natural colors', label: 'Pixel 9 Pro' },
   // ── Canon ──
-  { id: 'Shot on Canon EOS R5 Mark II with RF 100mm f/2.8L Macro lens, tack sharp detail', label: 'Canon R5 II Macro' },
-  { id: 'Shot on Canon EOS R5 with RF 50mm f/1.2L USM lens, shallow depth of field', label: 'Canon R5 50mm' },
-  { id: 'Shot on Canon EOS R6 Mark II with RF 85mm f/1.2L USM lens, creamy bokeh', label: 'Canon R6 85mm' },
-  { id: 'Shot on Canon EOS R3 with RF 35mm f/1.4L VCM lens, wide angle perspective', label: 'Canon R3 35mm' },
-  { id: 'Shot on Canon EOS 5D Mark IV DSLR with EF 24-70mm f/2.8L II zoom lens', label: 'Canon 5D 24-70' },
+  { id: 'Shot on Canon EOS R5 Mark II mirrorless, 45MP full-frame sensor', label: 'Canon R5 Mark II' },
+  { id: 'Shot on Canon EOS R5 mirrorless, full-frame sensor', label: 'Canon R5' },
+  { id: 'Shot on Canon EOS R6 Mark II mirrorless, 24MP full-frame sensor', label: 'Canon R6 Mark II' },
+  { id: 'Shot on Canon EOS R3 professional mirrorless, stacked full-frame sensor', label: 'Canon R3' },
+  { id: 'Shot on Canon EOS 5D Mark IV DSLR, full-frame sensor', label: 'Canon 5D Mark IV' },
   // ── Sony ──
-  { id: 'Shot on Sony A7R V with FE 90mm f/2.8 Macro G OSS lens, tack sharp close-up', label: 'Sony A7RV Macro' },
-  { id: 'Shot on Sony A7 IV with FE 50mm f/1.4 GM lens, smooth bokeh', label: 'Sony A7IV 50mm' },
-  { id: 'Shot on Sony A7C II with FE 35mm f/1.4 GM lens, full frame', label: 'Sony A7C 35mm' },
-  { id: 'Shot on Sony A1 with FE 85mm f/1.4 GM lens, compressed background, portrait style', label: 'Sony A1 85mm' },
-  { id: 'Shot on Sony A9 III with FE 24-70mm f/2.8 GM II zoom lens, versatile framing', label: 'Sony A9 24-70' },
+  { id: 'Shot on Sony A7R V mirrorless, 61MP high-resolution full-frame sensor', label: 'Sony A7R V' },
+  { id: 'Shot on Sony A7 IV mirrorless, 33MP full-frame sensor', label: 'Sony A7 IV' },
+  { id: 'Shot on Sony A7C II compact full-frame mirrorless', label: 'Sony A7C II' },
+  { id: 'Shot on Sony A1 flagship mirrorless, 50MP stacked full-frame sensor', label: 'Sony A1' },
+  { id: 'Shot on Sony A9 III global-shutter full-frame mirrorless', label: 'Sony A9 III' },
   // ── Nikon ──
-  { id: 'Shot on Nikon Z8 with NIKKOR Z 105mm f/2.8 VR S Macro lens, extreme detail', label: 'Nikon Z8 Macro' },
-  { id: 'Shot on Nikon Z9 with NIKKOR Z 50mm f/1.2 S lens, ultra sharp rendering', label: 'Nikon Z9 50mm' },
-  { id: 'Shot on Nikon Z6 III with NIKKOR Z 85mm f/1.2 S lens, buttery bokeh', label: 'Nikon Z6 85mm' },
+  { id: 'Shot on Nikon Z8 mirrorless, 45MP stacked full-frame sensor', label: 'Nikon Z8' },
+  { id: 'Shot on Nikon Z9 flagship mirrorless, stacked full-frame sensor', label: 'Nikon Z9' },
+  { id: 'Shot on Nikon Z6 III full-frame mirrorless', label: 'Nikon Z6 III' },
   // ── Fujifilm ──
-  { id: 'Shot on Fujifilm X-T5 with XF 56mm f/1.2 R WR lens, rich Fuji color science', label: 'Fuji XT5 56mm' },
-  { id: 'Shot on Fujifilm GFX 100S II medium format with GF 80mm f/1.7 lens, incredible detail', label: 'Fuji GFX Medium' },
-  { id: 'Shot on Fujifilm X100VI with fixed 23mm f/2 lens, classic film simulation look', label: 'Fuji X100VI' },
+  { id: 'Shot on Fujifilm X-T5 APS-C mirrorless, 40MP X-Trans sensor, rich Fuji color science', label: 'Fuji X-T5' },
+  { id: 'Shot on Fujifilm GFX 100S II medium-format mirrorless, 102MP sensor, incredible detail', label: 'Fuji GFX 100S II' },
+  { id: 'Shot on Fujifilm X100VI compact with classic film simulation look', label: 'Fuji X100VI' },
   // ── Leica ──
-  { id: 'Shot on Leica Q3 with Summilux 28mm f/1.7 ASPH lens, signature Leica color rendering', label: 'Leica Q3 28mm' },
-  { id: 'Shot on Leica SL3 with Summicron-SL 50mm f/2 ASPH lens, cinematic look', label: 'Leica SL3 50mm' },
+  { id: 'Shot on Leica Q3 full-frame compact with signature Leica color rendering', label: 'Leica Q3' },
+  { id: 'Shot on Leica SL3 full-frame mirrorless, cinematic look', label: 'Leica SL3' },
   // ── Hasselblad ──
-  { id: 'Shot on Hasselblad X2D 100C medium format with XCD 90mm f/2.5 V lens, extreme resolution and detail', label: 'Hasselblad X2D' },
-  // ── Lens Focal Lengths (generic) ──
-  { id: 'Photographed with 14mm ultra wide angle lens, dramatic perspective distortion', label: '14mm Ultra Wide' },
-  { id: 'Photographed with 24mm wide angle lens, shallow depth of field', label: '24mm Wide' },
-  { id: 'Photographed with 35mm lens, natural perspective, street photography feel', label: '35mm Natural' },
-  { id: 'Photographed with 50mm lens, classic nifty fifty perspective, true to life', label: '50mm Classic' },
-  { id: 'Photographed with 85mm portrait lens, beautiful bokeh, compressed background', label: '85mm Portrait' },
-  { id: 'Photographed with 100mm macro lens, extreme close-up, 1:1 magnification', label: '100mm Macro' },
-  { id: 'Photographed with 105mm macro lens, razor sharp focus on fine textures', label: '105mm Macro' },
-  { id: 'Photographed with 135mm lens, tight framing, smooth background separation', label: '135mm Tight' },
-  { id: 'Photographed with 200mm telephoto lens, extreme background compression, isolated subject', label: '200mm Telephoto' },
-  // ── Specialty ──
-  { id: 'Shot with Lensbaby Velvet 56mm art lens, dreamy soft glow, ethereal look', label: 'Lensbaby Velvet' },
-  { id: 'Shot with tilt-shift 24mm lens, selective focus plane, miniature effect', label: 'Tilt-Shift 24mm' },
-  { id: 'Shot with vintage Helios 44-2 58mm lens, swirly bokeh, analog character', label: 'Helios Vintage' },
-  { id: 'Shot with fisheye 8mm lens, extreme barrel distortion, 180-degree view', label: 'Fisheye 8mm' },
-  { id: 'Shot with anamorphic lens, cinematic horizontal flares, widescreen look', label: 'Anamorphic Cine' },
-  { id: 'Shot with Petzval 80.5mm f/1.9 art lens, swirly bokeh, brass barrel character', label: 'Petzval Art Lens' },
+  { id: 'Shot on Hasselblad X2D 100C medium-format mirrorless, 100MP sensor, extreme resolution', label: 'Hasselblad X2D' },
+  // ── Film ──
+  { id: 'Shot on Kodak Portra 400 35mm film, warm skin tones, fine grain', label: 'Kodak Portra 400' },
+  { id: 'Shot on Fujifilm Pro 400H 35mm film, soft pastel tones', label: 'Fuji Pro 400H' },
+  { id: 'Shot on CineStill 800T tungsten film, signature red halation around highlights', label: 'CineStill 800T' },
+  { id: 'Shot on Ilford HP5 Plus 400 black-and-white film, classic grain', label: 'Ilford HP5 B&W' },
+];
+
+const LENS_TYPES = [
+  { id: '', label: 'Default' },
+  // ── Prime focal lengths ──
+  { id: 'with a 14mm ultra-wide-angle lens, dramatic perspective distortion', label: '14mm Ultra Wide' },
+  { id: 'with a 24mm wide-angle lens', label: '24mm Wide' },
+  { id: 'with a 35mm lens, natural perspective, street-photography feel', label: '35mm Natural' },
+  { id: 'with a 50mm lens, classic nifty-fifty perspective, true-to-life rendering', label: '50mm Classic' },
+  { id: 'with an 85mm portrait lens, beautiful bokeh and compressed background', label: '85mm Portrait' },
+  { id: 'with a 100mm macro lens, extreme close-up and 1:1 magnification', label: '100mm Macro' },
+  { id: 'with a 105mm macro lens, razor-sharp focus on fine textures', label: '105mm Macro' },
+  { id: 'with a 135mm telephoto lens, tight framing and smooth background separation', label: '135mm Telephoto' },
+  { id: 'with a 200mm telephoto lens, extreme background compression and isolated subject', label: '200mm Telephoto' },
+  // ── Zoom ──
+  { id: 'with a 24-70mm f/2.8 standard zoom lens, versatile framing', label: '24-70mm Zoom' },
+  { id: 'with a 70-200mm f/2.8 telephoto zoom lens', label: '70-200mm Zoom' },
+  // ── Specialty / art ──
+  { id: 'with a tilt-shift 24mm lens, selective focus plane and miniature effect', label: 'Tilt-Shift 24mm' },
+  { id: 'with a fisheye 8mm lens, extreme barrel distortion and 180-degree view', label: 'Fisheye 8mm' },
+  { id: 'with an anamorphic cinema lens, horizontal flares and widescreen look', label: 'Anamorphic Cine' },
+  { id: 'with a Lensbaby Velvet 56mm art lens, dreamy soft glow, ethereal look', label: 'Lensbaby Velvet' },
+  { id: 'with a vintage Helios 44-2 58mm lens, swirly bokeh and analog character', label: 'Helios 44-2 Vintage' },
+  { id: 'with a Petzval 80.5mm art lens, swirly bokeh and brass-barrel character', label: 'Petzval Art' },
+];
+
+const F_STOPS = [
+  { id: '', label: 'Default' },
+  { id: 'shot wide open at f/1.2, ultra-shallow depth of field and creamy bokeh', label: 'f/1.2' },
+  { id: 'shot at f/1.4, very shallow depth of field and buttery bokeh', label: 'f/1.4' },
+  { id: 'shot at f/1.8, shallow depth of field with smooth background blur', label: 'f/1.8' },
+  { id: 'shot at f/2.8, moderately shallow depth of field, subject isolation', label: 'f/2.8' },
+  { id: 'shot at f/4, balanced depth of field', label: 'f/4' },
+  { id: 'shot at f/5.6, a versatile mid-range aperture with good sharpness', label: 'f/5.6' },
+  { id: 'shot at f/8, the lens sweet spot for maximum sharpness', label: 'f/8' },
+  { id: 'shot at f/11, deep depth of field with most of the scene in focus', label: 'f/11' },
+  { id: 'shot at f/16, maximum depth of field, everything tack sharp front to back', label: 'f/16' },
+];
+
+const SHUTTER_SPEEDS = [
+  { id: '', label: 'Default' },
+  { id: 'frozen with a 1/1000s shutter speed, tack-sharp action', label: '1/1000s Freeze' },
+  { id: 'shot at 1/250s shutter speed, crisp handheld capture', label: '1/250s Crisp' },
+  { id: 'shot at 1/60s shutter speed, natural handheld feel', label: '1/60s Handheld' },
+  { id: 'shot with a slow 1/15s shutter speed, subtle motion blur', label: '1/15s Motion' },
+  { id: 'long exposure at 1s shutter speed, pronounced motion trails', label: '1s Long Exposure' },
+];
+
+const ISO_SETTINGS = [
+  { id: '', label: 'Default' },
+  { id: 'shot at ISO 100, ultra-clean and noise-free rendering', label: 'ISO 100 Clean' },
+  { id: 'shot at ISO 400, minimal noise, natural light look', label: 'ISO 400' },
+  { id: 'shot at ISO 1600, slight grain for an atmospheric feel', label: 'ISO 1600 Grainy' },
+  { id: 'shot at ISO 6400, visible grain, low-light documentary look', label: 'ISO 6400 Low-Light' },
 ];
 
 const LIGHTING_OPTIONS = [
@@ -235,6 +273,7 @@ const COMPOSITION_OPTIONS = [
 const MODELS = [
   { id: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro', sub: 'Higher quality, slower' },
   { id: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash', sub: 'Faster, thinking mode' },
+  { id: 'gpt-image-2', label: 'OpenAI Image 2', sub: 'OpenAI, photo-realistic' },
 ];
 
 const RESOLUTIONS = [
@@ -303,7 +342,21 @@ export default function AssetCreator() {
 
   // Style options
   const [angle, setAngle] = useState('');
-  const [camera, setCamera] = useState('');
+
+  useEffect(() => {
+    if (assetCategory !== 'food') return;
+    if (!SHOT_TYPE_MODES.has(mode)) return;
+    if (!angle) return;
+    const current = FOOD_ANGLES.find((a) => a.id === angle);
+    if (!current?.compatibleWithShotType) setAngle('');
+  }, [mode, assetCategory, angle]);
+
+  const [cameraBody, setCameraBody] = useState('');
+  const [lensType, setLensType] = useState('');
+  const [fStop, setFStop] = useState('');
+  const [shutterSpeed, setShutterSpeed] = useState('');
+  const [isoSetting, setIsoSetting] = useState('');
+  const camera = [cameraBody, lensType, fStop, shutterSpeed, isoSetting].filter(Boolean).join(', ');
   const [lighting, setLighting] = useState('');
   const [selectedDetails, setSelectedDetails] = useState<string[]>([]);
   const [composition, setComposition] = useState('');
@@ -316,6 +369,8 @@ export default function AssetCreator() {
 
   // Results
   const [generating, setGenerating] = useState(false);
+  const [count, setCount] = useState(1);
+  const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
   const [assets, setAssets] = useState<GeneratedAsset[]>([]);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
@@ -331,11 +386,11 @@ export default function AssetCreator() {
 
   // Check Canva connection status on mount
   useEffect(() => {
-    fetch('/api/canva/status').then(r => r.json()).then(setCanvaStatus).catch(() => {});
+    authedFetch('/api/canva/status').then(r => r.json()).then(setCanvaStatus).catch(() => {});
   }, []);
 
   const connectCanva = async () => {
-    const res = await fetch('/api/canva/auth');
+    const res = await authedFetch('/api/canva/auth');
     const data = await res.json();
     if (data.url) window.open(data.url, '_blank', 'width=600,height=700');
   };
@@ -346,7 +401,7 @@ export default function AssetCreator() {
     setSendingToCanva(idx);
     setError(null);
     try {
-      const res = await fetch('/api/canva/upload', {
+      const res = await authedFetch('/api/canva/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -408,48 +463,82 @@ export default function AssetCreator() {
 
   const generate = async () => {
     if ((!dishName.trim() && !refImage) || generating) return;
+    const n = Math.min(Math.max(count, 1), 4);
     setGenerating(true);
     setError(null);
+    setProgress({ done: 0, total: n });
+
+    const body = {
+      dishName: dishName.trim(),
+      model,
+      resolution,
+      thinkingLevel: model === 'gemini-3.1-flash-image-preview' ? thinkingLevel : '',
+      mode,
+      variationNotes: variationNotes.trim() || undefined,
+      backgroundMode: ['full', 'isolate', 'variation'].includes(mode) ? 'solid' : bgMode,
+      backgroundColor: (['full', 'isolate', 'variation'].includes(mode) || bgMode === 'solid') ? activeBg : undefined,
+      angle,
+      camera,
+      lighting,
+      details: selectedDetails.join('. '),
+      composition,
+      aspectRatio: ratio,
+      referenceImage: refImage ? { base64: refImage.base64, mimeType: refImage.mimeType } : undefined,
+    };
+
+    type ReqResult = { ok: true; images: any[] } | { ok: false; error: string };
+    const requestOne = async (variationIndex: number): Promise<ReqResult> => {
+      try {
+        const res = await authedFetch('/api/content/generate-asset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...body, variationIndex }),
+        });
+        const text = await res.text();
+        let data: any;
+        try { data = JSON.parse(text); } catch { return { ok: false, error: text || 'Generation failed' }; }
+        if (!res.ok) return { ok: false, error: data.error || 'Generation failed' };
+        return { ok: true, images: data.images ?? [] };
+      } catch (e: any) {
+        return { ok: false, error: e.message || 'Network error' };
+      } finally {
+        setProgress((p) => ({ ...p, done: p.done + 1 }));
+      }
+    };
+
     try {
-      const res = await fetch('/api/content/generate-asset', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dishName: dishName.trim(),
-          model,
-          resolution,
-          thinkingLevel: model === 'gemini-3.1-flash-image-preview' ? thinkingLevel : '',
-          mode,
-          variationNotes: variationNotes.trim() || undefined,
-          backgroundMode: ['full', 'isolate', 'variation'].includes(mode) ? 'solid' : bgMode,
-          backgroundColor: (['full', 'isolate', 'variation'].includes(mode) || bgMode === 'solid') ? activeBg : undefined,
-          angle,
-          camera,
-          lighting,
-          details: selectedDetails.join('. '),
-          composition,
-          aspectRatio: ratio,
-          referenceImage: refImage ? { base64: refImage.base64, mimeType: refImage.mimeType } : undefined,
-        }),
+      const results = await Promise.all(Array.from({ length: n }, (_, i) => requestOne(i)));
+      const ts = Date.now();
+      const newAssets: GeneratedAsset[] = [];
+      const errors: string[] = [];
+      results.forEach((r: ReqResult, i: number) => {
+        if (r.ok === true) {
+          r.images.forEach((img: any, j: number) => {
+            newAssets.push({
+              base64: img.base64,
+              mimeType: img.mimeType,
+              prompt: dishName.trim() || 'reference',
+              timestamp: ts + i * 1000 + j,
+            });
+          });
+        } else {
+          errors.push(r.error);
+        }
       });
-      const text = await res.text();
-      let data: any;
-      try { data = JSON.parse(text); } catch { throw new Error(text || 'Generation failed'); }
-      if (!res.ok) throw new Error(data.error || 'Generation failed');
-      if (data.images?.length) {
-        const newAssets = data.images.map((img: any) => ({
-          base64: img.base64,
-          mimeType: img.mimeType,
-          prompt: dishName.trim() || 'reference',
-          timestamp: Date.now(),
-        }));
-        setAssets(prev => [...newAssets, ...prev]);
+      if (newAssets.length) {
+        setAssets((prev) => [...newAssets, ...prev]);
         setSelectedIdx(0);
       }
-    } catch (e: any) {
-      setError(e.message);
+      if (errors.length) {
+        setError(
+          newAssets.length
+            ? `${errors.length} of ${n} request${n > 1 ? 's' : ''} failed: ${errors[0]}`
+            : errors[0]
+        );
+      }
     } finally {
       setGenerating(false);
+      setProgress({ done: 0, total: 0 });
     }
   };
 
@@ -478,7 +567,7 @@ export default function AssetCreator() {
         name: m.name, category: m.category, description: m.description || undefined,
       })) || [];
 
-      const analysisRes = await fetch('/api/content/analyze-asset', {
+      const analysisRes = await authedFetch('/api/content/analyze-asset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -774,7 +863,7 @@ export default function AssetCreator() {
                     {generating ? (
                       <div className="flex flex-col items-center gap-3 py-16">
                         <Loader size={32} className="text-purple-400 animate-spin" />
-                        <p className="text-sm text-zinc-400">Generating with Gemini 3 Pro...</p>
+                        <p className="text-sm text-zinc-400">Generating with {MODELS.find(m => m.id === model)?.label ?? 'AI'}...</p>
                         <p className="text-[10px] text-zinc-600">This may take 15-30 seconds</p>
                       </div>
                     ) : selected ? (
@@ -934,7 +1023,7 @@ export default function AssetCreator() {
                 );
               })}
             </div>
-            {(mode === 'isolate' || mode === 'variation') && !refImage && (
+            {['isolate', 'variation', 'subtle-variations'].includes(mode) && !refImage && (
               <p className="text-[10px] text-amber-400 mt-2">Upload a reference photo above to use this mode</p>
             )}
           </div>
@@ -1074,38 +1163,139 @@ export default function AssetCreator() {
           )}
 
           {/* Angle */}
-          <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
-            <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Angle</h3>
-            <div className="flex flex-wrap gap-1.5">
-              {(assetCategory === 'food' ? FOOD_ANGLES : PRODUCT_ANGLES).map((a) => (
-                <button
-                  key={a.id}
-                  onClick={() => setAngle(a.id)}
-                  className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
-                    angle === a.id ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
-                  }`}
-                >
-                  {a.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          {(() => {
+            const shotTypeActive = assetCategory === 'food' && SHOT_TYPE_MODES.has(mode);
+            const baseAngles = assetCategory === 'food' ? FOOD_ANGLES : PRODUCT_ANGLES;
+            const visibleAngles = shotTypeActive
+              ? (FOOD_ANGLES as typeof FOOD_ANGLES).filter((a) => a.compatibleWithShotType)
+              : baseAngles;
+            return (
+              <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
+                <div className="flex items-baseline justify-between mb-3">
+                  <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">Angle</h3>
+                  {shotTypeActive && (
+                    <span className="text-[10px] text-zinc-500">Framing set by shot type · showing modifiers only</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {visibleAngles.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => setAngle(a.id)}
+                      className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
+                        angle === a.id ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
+                      }`}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
-          {/* Camera */}
-          <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
-            <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Camera</h3>
-            <div className="flex flex-wrap gap-1.5">
-              {CAMERAS.map((c) => (
+          {/* Camera / Lens */}
+          <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5 space-y-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">Camera & Lens</h3>
+              {(cameraBody || lensType || fStop || shutterSpeed || isoSetting) && (
                 <button
-                  key={c.id}
-                  onClick={() => setCamera(c.id)}
-                  className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
-                    camera === c.id ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
-                  }`}
+                  onClick={() => { setCameraBody(''); setLensType(''); setFStop(''); setShutterSpeed(''); setIsoSetting(''); }}
+                  className="text-[10px] text-zinc-500 hover:text-zinc-300 uppercase tracking-wider"
                 >
-                  {c.label}
+                  Reset
                 </button>
-              ))}
+              )}
+            </div>
+
+            {/* Camera Body */}
+            <div>
+              <h4 className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">Camera Body</h4>
+              <div className="flex flex-wrap gap-1.5">
+                {CAMERA_BODIES.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setCameraBody(c.id)}
+                    className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
+                      cameraBody === c.id ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Lens Type */}
+            <div>
+              <h4 className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">Lens Type</h4>
+              <div className="flex flex-wrap gap-1.5">
+                {LENS_TYPES.map((l) => (
+                  <button
+                    key={l.id}
+                    onClick={() => setLensType(l.id)}
+                    className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
+                      lensType === l.id ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {l.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* F-Stop */}
+            <div>
+              <h4 className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">F-Stop (Aperture)</h4>
+              <div className="flex flex-wrap gap-1.5">
+                {F_STOPS.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setFStop(f.id)}
+                    className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
+                      fStop === f.id ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Shutter Speed */}
+            <div>
+              <h4 className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">Shutter Speed</h4>
+              <div className="flex flex-wrap gap-1.5">
+                {SHUTTER_SPEEDS.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => setShutterSpeed(s.id)}
+                    className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
+                      shutterSpeed === s.id ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* ISO */}
+            <div>
+              <h4 className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">ISO</h4>
+              <div className="flex flex-wrap gap-1.5">
+                {ISO_SETTINGS.map((i) => (
+                  <button
+                    key={i.id}
+                    onClick={() => setIsoSetting(i.id)}
+                    className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
+                      isoSetting === i.id ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {i.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -1199,7 +1389,7 @@ export default function AssetCreator() {
                 </div>
                 {canvaStatus.connected ? (
                   <button
-                    onClick={async () => { await fetch('/api/canva/disconnect', { method: 'POST' }); setCanvaStatus({ ...canvaStatus, connected: false }); }}
+                    onClick={async () => { await authedFetch('/api/canva/disconnect', { method: 'POST' }); setCanvaStatus({ ...canvaStatus, connected: false }); }}
                     className="text-[10px] text-zinc-500 hover:text-zinc-300"
                   >
                     Disconnect
@@ -1217,16 +1407,43 @@ export default function AssetCreator() {
           )}
 
           {/* Generate Button */}
-          <div className="sticky bottom-0 bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
+          <div className="sticky bottom-0 bg-[#12121A] border border-[#27273A] rounded-2xl p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider">Count</h3>
+              <div className="flex gap-1">
+                {[1, 2, 3, 4].map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => setCount(n)}
+                    disabled={generating}
+                    className={`w-9 h-9 rounded-lg border text-xs font-medium transition-all ${
+                      count === n
+                        ? 'bg-purple-500/15 border-purple-500/40 text-purple-200'
+                        : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
+                    } disabled:opacity-40 disabled:cursor-not-allowed`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button
               onClick={generate}
-              disabled={generating || ((mode === 'isolate' || mode === 'variation') ? !refImage : (!dishName.trim() && !refImage))}
+              disabled={generating || (['isolate', 'variation', 'subtle-variations'].includes(mode) ? !refImage : (!dishName.trim() && !refImage))}
               className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-gradient-to-r from-purple-600 to-purple-500 text-sm text-white font-medium hover:from-purple-500 hover:to-purple-400 transition-all shadow-[0_0_15px_rgba(168,85,247,0.2)] disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {generating ? (
-                <><Loader size={14} className="animate-spin" /> {refImage && !['full', 'isolate', 'variation'].includes(mode) ? 'Enhancing...' : 'Generating...'}</>
+                <>
+                  <Loader size={14} className="animate-spin" />
+                  {refImage && !['full', 'isolate', 'variation'].includes(mode) ? 'Enhancing' : 'Generating'}
+                  {progress.total > 1 ? ` ${progress.done}/${progress.total}…` : '…'}
+                </>
               ) : (
-                <><Plus size={14} /> {refImage && !['full', 'isolate', 'variation'].includes(mode) ? 'Enhance Photo' : 'Generate Asset'}</>
+                <>
+                  <Plus size={14} />
+                  {refImage && !['full', 'isolate', 'variation'].includes(mode) ? 'Enhance Photo' : 'Generate Asset'}
+                  {count > 1 ? ` × ${count}` : ''}
+                </>
               )}
             </button>
           </div>

@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Upload,
@@ -298,7 +299,7 @@ export default function QuoteGenerator() {
     setSuggestLoading(true);
     setSuggestError(null);
     try {
-      const res = await fetch('/api/content/generate-quote', {
+      const res = await authedFetch('/api/content/generate-quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

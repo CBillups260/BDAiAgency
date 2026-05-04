@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Upload,
@@ -100,7 +101,7 @@ export default function SubjectIsolator() {
     setResultImage(null);
     setResultBase64(null);
     try {
-      const res = await fetch('/api/content/extract-background', {
+      const res = await authedFetch('/api/content/extract-background', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

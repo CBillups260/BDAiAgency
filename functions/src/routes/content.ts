@@ -1,15 +1,50 @@
 import { Router } from "express";
 import { GoogleGenAI } from "@google/genai";
-import db, { schema } from "../db/index.js";
-import { eq } from "drizzle-orm";
+import OpenAI from "openai";
+import { toFile } from "openai/uploads";
 
 const router = Router();
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const VALID_RATIOS = [
   "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9",
 ] as const;
 type AspectRatio = (typeof VALID_RATIOS)[number];
+
+// gpt-image-2 accepts arbitrary W:H ratios between 1:3 and 3:1.
+function isValidOpenAIRatio(r: string): boolean {
+  const m = /^(\d+):(\d+)$/.exec(r);
+  if (!m) return false;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  if (!w || !h) return false;
+  const ratio = w / h;
+  return ratio >= 1 / 3 - 1e-6 && ratio <= 3 + 1e-6;
+}
+
+// gpt-image-2 accepts arbitrary WxH strings with both edges multiples of 16,
+// ratios between 1:3 and 3:1, and max edge up to 2560 (2K).
+function openaiSize(aspectRatio: string, resolution: string): string {
+  const [wRaw, hRaw] = aspectRatio.split(":").map(Number);
+  if (!wRaw || !hRaw) return "1024x1024";
+  const maxEdgeTarget =
+    resolution === "512" ? 768 :
+    resolution === "1K" ? 1536 :
+    resolution === "2K" ? 2048 :
+    2560;
+  const round16 = (n: number) => Math.max(256, Math.round(n / 16) * 16);
+  let width: number;
+  let height: number;
+  if (wRaw >= hRaw) {
+    width = maxEdgeTarget;
+    height = round16(maxEdgeTarget * (hRaw / wRaw));
+  } else {
+    height = maxEdgeTarget;
+    width = round16(maxEdgeTarget * (wRaw / hRaw));
+  }
+  return `${width}x${height}`;
+}
 
 router.post("/generate-image", async (req, res) => {
   try {
@@ -162,6 +197,154 @@ CRITICAL RULES:
   }
 });
 
+// ─── Composite Generation (N labeled references + prompt with @mentions) ─
+
+router.post("/generate-composite", async (req, res) => {
+  try {
+    const {
+      prompt = "",
+      model = "gemini-3-pro-image-preview",
+      aspectRatio = "1:1",
+      thinkingLevel = "",
+      references = [],
+    } = req.body as {
+      prompt?: string;
+      model?: string;
+      aspectRatio?: AspectRatio;
+      thinkingLevel?: string;
+      references?: { base64: string; mimeType: string; label: string }[];
+    };
+
+    if (!prompt?.trim()) {
+      return res.status(400).json({ error: "A prompt is required." });
+    }
+    if (references.length > 8) {
+      return res.status(400).json({ error: "Maximum 8 reference images." });
+    }
+
+    const allowedModels = ["gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview", "gpt-image-2"];
+    const selectedModel = allowedModels.includes(model) ? model : "gemini-3-pro-image-preview";
+
+    const isOpenAI = selectedModel === "gpt-image-2";
+    const validRatio = isOpenAI
+      ? isValidOpenAIRatio(aspectRatio)
+      : VALID_RATIOS.includes(aspectRatio as AspectRatio);
+    if (!validRatio) {
+      return res.status(400).json({
+        error: isOpenAI
+          ? "Invalid aspect ratio. Use W:H between 1:3 and 3:1."
+          : "Invalid aspect ratio.",
+      });
+    }
+
+    let fullPrompt = prompt.trim();
+    if (references.length > 0) {
+      const refLegend = references
+        .map((r, i) => `- Image ${i + 1} is what the user calls @${r.label}`)
+        .join("\n");
+      fullPrompt = `The user has provided ${references.length} reference image${references.length > 1 ? "s" : ""}. They refer to them by @-mentions in their prompt:
+${refLegend}
+
+When you see an @mention in the prompt, use the corresponding reference image to fulfill that part of the instruction. For example, if the user says "use the sky from @img1 in @img2", take the sky from Image 1 and composite it into the scene from Image 2.
+
+User's instruction:
+${prompt.trim()}
+
+Produce a single photorealistic output image that follows this instruction precisely.`;
+    }
+
+    const images: { base64: string; mimeType: string }[] = [];
+
+    if (selectedModel === "gpt-image-2") {
+      const size = openaiSize(aspectRatio, "2K");
+      const openaiPrompt = `Photorealistic. ${fullPrompt}`;
+
+      let result;
+      if (references.length > 0) {
+        const imageFiles = await Promise.all(
+          references.map(async (ref, i) => {
+            const ext = (ref.mimeType.split("/")[1] || "png").toLowerCase();
+            return toFile(
+              Buffer.from(ref.base64, "base64"),
+              `ref${i + 1}.${ext === "jpeg" ? "jpg" : ext}`,
+              { type: ref.mimeType },
+            );
+          }),
+        );
+        result = await openai.images.edit({
+          model: "gpt-image-2",
+          image: imageFiles as any,
+          prompt: openaiPrompt,
+          size: size as any,
+          quality: "high",
+        });
+      } else {
+        result = await openai.images.generate({
+          model: "gpt-image-2",
+          prompt: openaiPrompt,
+          size: size as any,
+          quality: "high",
+        });
+      }
+
+      const b64 = result.data?.[0]?.b64_json;
+      if (b64) images.push({ base64: b64, mimeType: "image/png" });
+    } else {
+      const parts: any[] = [];
+      for (const ref of references) {
+        parts.push({ inlineData: { data: ref.base64, mimeType: ref.mimeType } });
+      }
+      parts.push({ text: fullPrompt });
+
+      const config: any = {
+        responseModalities: ["TEXT", "IMAGE"],
+        imageConfig: {
+          aspectRatio: aspectRatio as AspectRatio,
+          imageSize: "1K",
+        },
+      };
+      if (selectedModel === "gemini-3.1-flash-image-preview" && thinkingLevel) {
+        config.thinkingConfig = { thinkingLevel, includeThoughts: false };
+      }
+
+      const response = await ai.models.generateContent({
+        model: selectedModel,
+        contents: [{ role: "user", parts }],
+        config,
+      });
+
+      const responseParts = response.candidates?.[0]?.content?.parts ?? [];
+      for (const part of responseParts) {
+        if ((part as any).inlineData) {
+          images.push({
+            base64: (part as any).inlineData.data,
+            mimeType: (part as any).inlineData.mimeType || "image/png",
+          });
+        }
+      }
+    }
+
+    if (images.length === 0) {
+      return res.status(422).json({ error: "No image generated. Try a different prompt." });
+    }
+
+    res.json({ images, promptUsed: fullPrompt });
+  } catch (err: any) {
+    console.error("Composite generation error:", err?.message || err);
+    let userMessage = "Failed to generate image.";
+    let statusCode = 500;
+    if (err?.status && typeof err.status === "number") statusCode = err.status;
+    if (err?.message) {
+      try {
+        userMessage = JSON.parse(err.message)?.error?.message || err.message;
+      } catch {
+        userMessage = err.message;
+      }
+    }
+    res.status(statusCode).json({ error: userMessage });
+  }
+});
+
 // ─── Asset Generation (reference image → polished render) ─
 
 router.post("/generate-asset", async (req, res) => {
@@ -182,6 +365,7 @@ router.post("/generate-asset", async (req, res) => {
       composition = "",
       aspectRatio = "1:1",
       referenceImage,
+      variationIndex = 0,
     } = req.body as {
       dishName?: string;
       model?: string;
@@ -198,22 +382,31 @@ router.post("/generate-asset", async (req, res) => {
       composition?: string;
       aspectRatio?: AspectRatio;
       referenceImage?: { base64: string; mimeType: string };
+      variationIndex?: number;
     };
 
-    const allowedModels = ["gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview"];
+    const allowedModels = ["gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview", "gpt-image-2"];
     const selectedModel = allowedModels.includes(model) ? model : "gemini-3-pro-image-preview";
     const allowedRes = ["512", "1K", "2K", "4K"];
     const selectedRes = allowedRes.includes(resolution) ? resolution : "1K";
 
-    if ((mode === "isolate" || mode === "variation") && !referenceImage) {
+    if (["isolate", "variation", "subtle-variations", "resize"].includes(mode) && !referenceImage) {
       return res.status(400).json({ error: "A reference image is required for this mode." });
     }
     if (!dishName?.trim() && !referenceImage) {
       return res.status(400).json({ error: "Provide a dish name or upload a reference image." });
     }
 
-    if (!VALID_RATIOS.includes(aspectRatio as AspectRatio)) {
-      return res.status(400).json({ error: "Invalid aspect ratio." });
+    const isOpenAI = selectedModel === "gpt-image-2";
+    const validRatio = isOpenAI
+      ? isValidOpenAIRatio(aspectRatio)
+      : VALID_RATIOS.includes(aspectRatio as AspectRatio);
+    if (!validRatio) {
+      return res.status(400).json({
+        error: isOpenAI
+          ? "Invalid aspect ratio. Use W:H between 1:3 and 3:1."
+          : "Invalid aspect ratio.",
+      });
     }
 
     // Modes that intentionally transform the image (not enhancement)
@@ -226,8 +419,26 @@ router.post("/generate-asset", async (req, res) => {
     // When a reference image is provided and mode is NOT a transform mode,
     // we treat it as a photo enhancement — same food, same scene, different styling.
     const enhanceStyles: Record<string, string> = {
-      // Food styles
-      "macro":         "Transform into an extreme close-up macro shot. Crank sharpness to reveal every grain, droplet, seed, and fiber in hyper-detail. Blow out the background into gorgeous creamy bokeh. The textures should be so vivid the viewer can almost taste and feel the food.",
+      // ── Shot type / framing prompts ─────────────────────────────
+      // These re-frame the existing photo at a different camera distance/angle
+      // and ENHANCE QUALITY (sharpness, focus, detail, noise reduction).
+      // They MUST NOT change the setting, scene, background, lighting style,
+      // or color palette. The "preserve background" rule is also enforced
+      // by the shot-type wrapper prompt below.
+      "macro":         "Re-frame as an extreme close-up macro shot. Move the camera in extremely close so the subject fills the frame, revealing every fine texture and detail. Keep the SAME background, surface, lighting, and color palette as the original — do not change, replace, or restyle the background.",
+      "detail":        "Re-frame as a tight detail crop on the most interesting feature of the subject — closer than a regular close-up but not as extreme as macro. Keep the SAME background, surface, lighting, and color palette as the original — do not change, replace, or restyle the background.",
+      "closeup":       "Re-frame as a close-up shot. The subject fills most of the frame with minimal surrounding context — the full subject is visible. Keep the SAME background, surface, lighting, and color palette as the original — do not change, replace, or restyle the background.",
+      "mcu":           "Re-frame as a medium close-up. The subject fills the central frame with a small ring of immediate context (plate edge, sliver of surface). Keep the SAME background, surface, lighting, and color palette as the original — do not change, replace, or restyle the background.",
+      "medium":        "Re-frame as a medium shot. The subject is still the focus but more of the plate and immediate surface is visible. Keep the SAME background, surface, lighting, and color palette as the original — do not invent or change the background; only reveal what is already part of the existing scene.",
+      "wide":          "Re-frame slightly wider so a bit more of the existing surface and surroundings is visible around the subject. Do NOT pull back so far that you have to invent new background elements. Keep the SAME background, surface, lighting, and color palette as the original — only continue the EXISTING surroundings naturally.",
+      "overhead":      "Re-frame from a perfectly overhead, top-down perspective looking straight down at the subject. Keep the SAME background, surface, props, plating, lighting, and color palette as the original — do not rearrange items or add styling props, garnishes, or utensils. Same scene, just viewed from above.",
+      "high45":        "Re-frame from a high 45-degree angle looking down at the subject — classic 3/4-down perspective without going fully overhead. Keep the SAME background, surface, props, lighting, and color palette as the original — do not change, replace, or restyle the background.",
+      "threequarter":  "Re-frame from a three-quarter angle showing both the front and one side of the subject for added depth and dimension. Keep the SAME background, surface, props, lighting, and color palette as the original — do not change, replace, or restyle the background.",
+      "eye":           "Re-frame from straight-on at eye level, directly facing the subject. Keep the SAME background, surface, props, lighting, and color palette as the original — do not change, replace, or restyle the background.",
+      "side":          "Re-frame from a straight-on side profile, showing the subject's full layers and height. Keep the SAME background, surface, props, lighting, and color palette as the original — do not change, replace, or restyle the background.",
+      "low-angle":     "Re-frame as a hero / low-angle shot, with the camera slightly below the subject looking upward. Keep the SAME background, surface, props, lighting, and color palette as the original — do not change, replace, or restyle the background.",
+
+      // ── Style prompts (used by Product modes only) ──────────────
       "lifestyle":     "Transform into a warm, golden-hour lifestyle shot. Flood the scene with warm ambient light, add a soft golden glow, enrich warm tones dramatically. The scene should feel like a beautiful moment at a cozy restaurant — inviting, atmospheric, and magazine-worthy.",
       "flat-lay":      "Transform into a crisp, perfectly-lit overhead flat-lay. Brighten aggressively, eliminate all harsh shadows, make every color pop with vibrant saturation. The result should look like a professionally styled Instagram flat-lay with perfect even lighting.",
       "editorial":     "Transform into a premium magazine-cover editorial shot. Perfect every detail — flawless color balance, razor-sharp clarity, sophisticated toning, and remove any visual imperfections. This should look like it was shot for Bon Appétit or Vogue with a $50K camera setup.",
@@ -278,13 +489,102 @@ router.post("/generate-asset", async (req, res) => {
     let prompt: string;
     const dish = dishName.trim() || "this item";
 
-    if (isEnhanceMode) {
+    if (mode === "resize") {
+      prompt = `Recreate this exact image at a new aspect ratio. This is a reframe to fit a new canvas — NOT a transformation, restyle, or variation.
+
+PRESERVE EVERY DETAIL OF THE ORIGINAL:
+- Same subject, same composition, same scene
+- Same background, surface, props, garnishes, utensils
+- Same lighting style, color palette, mood, white balance, and time of day
+- Same style of photography, same lens character, same depth of field
+- Same textures, same materials, same level of detail
+
+THE ONLY THING THAT CHANGES:
+- The aspect ratio of the frame. Intelligently extend the image on whichever edges are needed to fit the new canvas naturally. If the new ratio is wider than the original, seamlessly extend the scene on the sides — continue the existing surface, background, and environment as they already appear. If the new ratio is taller, extend above and/or below in the same way. Any extended region must look like a native part of the original photograph: same style, same surface, same lighting, same texture continuation.
+
+Do NOT add new subjects, new props, new text, watermarks, signatures, borders, or scene elements that weren't in the original. Do NOT crop out or remove anything that was in the original — if the new ratio is narrower in one dimension, recompose minimally rather than cutting the subject. Do NOT shift the color grade, contrast, saturation, or mood.
+
+Someone comparing the original and the output should feel like they are looking at the same photograph, just shot on a camera with a different sensor aspect ratio.`;
+    } else if (isEnhanceMode) {
       // ── ENHANCEMENT PATH ─────────────────────────────────
       // Reference image is present, mode is NOT a transform mode.
-      // Goal: Visibly enhance and restyle the photo — the result should look noticeably better/different.
-      const styleDesc = enhanceStyles[mode] || "Dramatically improve the overall image quality — boost sharpness, enrich colors, perfect the lighting, and add professional polish. The result should look noticeably better than the original.";
+      // Three flavors:
+      //   1. Subtle Variations → sibling-frame nudge (tiny camera/angle shift, everything else identical)
+      //   2. Shot-type modes   → preservation-first quality enhance + re-frame
+      //   3. Style modes       → transform-focused (used by Product styles)
+      const SHOT_TYPE_MODES = new Set([
+        "macro", "detail", "closeup", "mcu", "medium", "wide",
+        "overhead", "high45", "threequarter", "eye", "side", "low-angle",
+      ]);
+      const isShotTypeMode = SHOT_TYPE_MODES.has(mode);
 
-      prompt = `You are an expert food and product photographer doing a professional reshoot and retouch. You're given a real photograph — your job is to make it look DRAMATICALLY better by applying a strong photographic style.
+      if (mode === "subtle-variations") {
+        const subtleVariationPool = [
+          "Rotate the camera roughly 5 degrees clockwise around the subject — same height, same distance, same scene.",
+          "Rotate the camera roughly 5 degrees counter-clockwise around the subject — same height, same distance, same scene.",
+          "Shift the camera a few inches to the right (pure parallax) — same height, same distance, same subject position.",
+          "Shift the camera a few inches to the left (pure parallax) — same height, same distance, same subject position.",
+          "Raise the camera angle very slightly — only a few degrees higher than the original — keep distance and framing otherwise identical.",
+          "Lower the camera angle very slightly — only a few degrees lower than the original — keep distance and framing otherwise identical.",
+          "Move the camera a small step closer to the subject — same angle, same height, same scene.",
+          "Move the camera a small step farther from the subject — same angle, same height, same scene.",
+          "Rotate the subject itself a few degrees on its surface — the camera stays in the exact same position.",
+          "Reposition a loose garnish, crumb, or small prop by a tiny amount — the camera stays identical.",
+          "Subtly shift the plate or product position on the surface by a fraction of an inch — same camera, same scene.",
+          "Introduce the barest amount of camera roll (under 2 degrees of tilt) — nothing else changes.",
+        ];
+        const idx = Math.max(0, Math.floor(Number(variationIndex) || 0)) % subtleVariationPool.length;
+        const variation = subtleVariationPool[idx];
+
+        prompt = `You are producing a SUBTLE VARIATION of a real photograph — the goal is a second usable frame from the same shoot, NOT a different image.
+
+KEEP EVERYTHING IDENTICAL TO THE ORIGINAL:
+- Same subject, same food/product, same plating, same portion, same ingredients, same garnishes — nothing added, nothing removed
+- Same background, surface, props, utensils, glassware
+- Same lighting style, color palette, mood, time of day, white balance
+- Same lens character and depth of field
+- Same general composition — the subject is still the hero, still in roughly the same area of the frame
+
+THE ONLY THING THAT CHANGES (keep it small — this is a sibling frame, not a new shot):
+${variation}
+
+Also apply a very small amount of quality polish — marginally sharper focus on the subject, slightly cleaner noise — but do NOT change brightness, contrast, or color grade. Flipping between the original and this frame should feel like two burst-mode frames from the same shoot, seconds apart.
+
+${dishName.trim() ? `The subject is: ${dishName.trim()}.` : ""}`;
+
+      } else if (isShotTypeMode) {
+        // Quality enhancement + re-framing. PRESERVE the scene/background.
+        const shotDesc = enhanceStyles[mode] || "Re-frame the image while keeping the SAME background, surface, lighting, and color palette as the original.";
+
+        prompt = `You are a professional photo retoucher. You're given a real photograph and your job is to (1) ENHANCE its technical quality and (2) RE-FRAME it as the requested shot type. You are NOT restyling the image and NOT changing the scene.
+
+WHAT TO IMPROVE (quality only):
+- Sharpness, focus, and fine detail
+- Reduce noise, grain, and compression artifacts
+- Correct any exposure or white-balance issues subtly
+- Improve micro-contrast and clarity on the subject
+- Remove minor blemishes, dust, or distractions on the subject only
+
+WHAT MUST NOT CHANGE (this is critical):
+- The SETTING, SCENE, and BACKGROUND must remain the same — do NOT swap, replace, restyle, or invent new background elements, surfaces, props, or environments
+- The LIGHTING STYLE must remain the same — do NOT add dramatic studio lighting, rim lights, spotlights, golden glows, neon, or any new light sources that weren't in the original
+- The COLOR PALETTE and MOOD must remain the same — no aggressive color grading, no warming/cooling shifts, no cinematic LUTs
+- Do NOT add atmosphere effects (steam, smoke, bokeh, light rays, particles) that weren't already in the original
+- Do NOT rearrange, add, or remove props, garnishes, utensils, or any scene elements
+- The subject (food/product) must be the SAME item with the same plating and presentation
+
+WHAT TO DO WITH FRAMING:
+${shotDesc}
+
+This is a quality enhancement + re-frame, NOT a creative transformation. Someone comparing before/after should see a sharper, cleaner, better-quality version of the SAME photo from the requested perspective — not a different scene or different mood.
+
+${dishName.trim() ? `The subject is: ${dishName.trim()}.` : ""}`;
+
+      } else {
+        // Style modes (Product) — keep the transformation-focused wrapper.
+        const styleDesc = enhanceStyles[mode] || "Dramatically improve the overall image quality — boost sharpness, enrich colors, perfect the lighting, and add professional polish. The result should look noticeably better than the original.";
+
+        prompt = `You are an expert food and product photographer doing a professional reshoot and retouch. You're given a real photograph — your job is to make it look DRAMATICALLY better by applying a strong photographic style.
 
 YOUR TASK: Transform this photo into a stunning, professional-grade image. Apply the requested style BOLDLY — the viewer should immediately see a clear difference between the original and your result.
 
@@ -303,6 +603,7 @@ STYLE TO APPLY (go bold with this):
 ${styleDesc}
 
 ${dishName.trim() ? `The subject is: ${dishName.trim()}.` : ""}`;
+      }
 
     } else {
       // ── GENERATION / TRANSFORM PATH ──────────────────────
@@ -323,7 +624,40 @@ ${dishName.trim() ? `The subject is: ${dishName.trim()}.` : ""}`;
           break;
 
         case "macro":
-          prompt = `Create an ultra-realistic 4K macro shot of ${dish}. Extreme close-up showing every texture, droplet, and detail. Shallow depth of field, the subject should fill the entire frame. ${bgInstruction}`;
+          prompt = `Create an ultra-realistic 4K macro shot of ${dish}. Extreme close-up — the subject fills the entire frame, revealing every fine texture and detail. Shallow depth of field. ${bgInstruction}`;
+          break;
+        case "detail":
+          prompt = `Create an ultra-realistic 4K detail shot of ${dish}. Tight crop on a key feature or area of the dish — closer than a regular close-up but not as extreme as macro. ${bgInstruction}`;
+          break;
+        case "closeup":
+          prompt = `Create an ultra-realistic 4K close-up of ${dish}. The subject fills most of the frame with minimal surrounding context — the full dish is visible but no environment. ${bgInstruction}`;
+          break;
+        case "mcu":
+          prompt = `Create an ultra-realistic 4K medium close-up of ${dish}. The dish fills the central frame with a small ring of immediate context (plate edge, sliver of surface). ${bgInstruction}`;
+          break;
+        case "medium":
+          prompt = `Create an ultra-realistic 4K medium shot of ${dish}. The dish is the focus but the plate, surface, and immediate surroundings are clearly visible. ${bgInstruction}`;
+          break;
+        case "wide":
+          prompt = `Create an ultra-realistic 4K wide pulled-back photograph of ${dish}, shown within its full scene and environment. ${bgInstruction}`;
+          break;
+        case "overhead":
+          prompt = `Create an ultra-realistic 4K overhead, top-down photograph of ${dish}, shot directly from above at a true 90-degree angle. Clean, natural overhead framing — no extra styling props beyond what naturally accompanies the dish. ${bgInstruction}`;
+          break;
+        case "high45":
+          prompt = `Create an ultra-realistic 4K photograph of ${dish} from a high 45-degree angle looking down — the classic 3/4-down food photography perspective without going fully overhead. ${bgInstruction}`;
+          break;
+        case "threequarter":
+          prompt = `Create an ultra-realistic 4K photograph of ${dish} from a three-quarter angle, showing both the front and one side of the dish for added depth and dimension. ${bgInstruction}`;
+          break;
+        case "eye":
+          prompt = `Create an ultra-realistic 4K straight-on eye-level photograph of ${dish}, directly facing the subject. ${bgInstruction}`;
+          break;
+        case "side":
+          prompt = `Create an ultra-realistic 4K straight-on side profile photograph of ${dish}, showing its full layers and height. ${bgInstruction}`;
+          break;
+        case "low-angle":
+          prompt = `Create an ultra-realistic 4K hero shot of ${dish} from a low angle looking upward, making the dish feel grand and imposing. ${bgInstruction}`;
           break;
         case "lifestyle":
           prompt = `Create an ultra-realistic 4K lifestyle photograph of ${dish} in a natural, lived-in setting. Show it on a real table with authentic props like napkins, utensils, drinks, and ambient surroundings. The scene should feel warm, inviting, and candid. ${bgInstruction}`;
@@ -471,49 +805,83 @@ ${dishName.trim() ? `The subject is: ${dishName.trim()}.` : ""}`;
     if (composition && !isEnhanceMode) extras.push(composition);
     if (extras.length) prompt += "\n\nADDITIONAL STYLE ADJUSTMENTS: " + extras.join(". ") + ".";
 
-    // Build parts (reference image + text prompt)
-    const parts: any[] = [];
-    if (referenceImage) {
-      parts.push({
-        inlineData: {
-          data: referenceImage.base64,
-          mimeType: referenceImage.mimeType,
-        },
-      });
-    }
-    parts.push({ text: prompt });
-
-    const config: any = {
-      responseModalities: ["TEXT", "IMAGE"],
-      imageConfig: {
-        aspectRatio: aspectRatio as AspectRatio,
-        imageSize: selectedRes,
-      },
-    };
-
-    // Thinking mode (Flash model only)
-    if (selectedModel === "gemini-3.1-flash-image-preview" && thinkingLevel) {
-      config.thinkingConfig = {
-        thinkingLevel: thinkingLevel,
-        includeThoughts: false,
-      };
-    }
-
-    const response = await ai.models.generateContent({
-      model: selectedModel,
-      contents: [{ role: "user", parts }],
-      config,
-    });
-
-    const responseParts = response.candidates?.[0]?.content?.parts ?? [];
     const images: { base64: string; mimeType: string }[] = [];
 
-    for (const part of responseParts) {
-      if ((part as any).inlineData) {
-        images.push({
-          base64: (part as any).inlineData.data,
-          mimeType: (part as any).inlineData.mimeType || "image/png",
+    if (selectedModel === "gpt-image-2") {
+      const openaiPrompt = `Photorealistic. Significantly improve sharpness, lighting, color, and overall polish while keeping the subject the same. The result should look clearly better than the input — a professional retouch, not a near-identical copy. ${prompt}`;
+      const size = openaiSize(aspectRatio, selectedRes);
+      const quality: "low" | "medium" | "high" =
+        selectedRes === "512" ? "low"
+        : selectedRes === "1K" ? "medium"
+        : "high";
+
+      let result;
+      if (referenceImage) {
+        const ext = (referenceImage.mimeType.split("/")[1] || "png").toLowerCase();
+        const imageFile = await toFile(
+          Buffer.from(referenceImage.base64, "base64"),
+          `reference.${ext === "jpeg" ? "jpg" : ext}`,
+          { type: referenceImage.mimeType },
+        );
+        result = await openai.images.edit({
+          model: "gpt-image-2",
+          image: imageFile,
+          prompt: openaiPrompt,
+          size: size as any,
+          quality,
         });
+      } else {
+        result = await openai.images.generate({
+          model: "gpt-image-2",
+          prompt: openaiPrompt,
+          size: size as any,
+          quality,
+        });
+      }
+
+      const b64 = result.data?.[0]?.b64_json;
+      if (b64) images.push({ base64: b64, mimeType: "image/png" });
+    } else {
+      const parts: any[] = [];
+      if (referenceImage) {
+        parts.push({
+          inlineData: {
+            data: referenceImage.base64,
+            mimeType: referenceImage.mimeType,
+          },
+        });
+      }
+      parts.push({ text: prompt });
+
+      const config: any = {
+        responseModalities: ["TEXT", "IMAGE"],
+        imageConfig: {
+          aspectRatio: aspectRatio as AspectRatio,
+          imageSize: selectedRes,
+        },
+      };
+
+      if (selectedModel === "gemini-3.1-flash-image-preview" && thinkingLevel) {
+        config.thinkingConfig = {
+          thinkingLevel: thinkingLevel,
+          includeThoughts: false,
+        };
+      }
+
+      const response = await ai.models.generateContent({
+        model: selectedModel,
+        contents: [{ role: "user", parts }],
+        config,
+      });
+
+      const responseParts = response.candidates?.[0]?.content?.parts ?? [];
+      for (const part of responseParts) {
+        if ((part as any).inlineData) {
+          images.push({
+            base64: (part as any).inlineData.data,
+            mimeType: (part as any).inlineData.mimeType || "image/png",
+          });
+        }
       }
     }
 
@@ -719,7 +1087,6 @@ router.post("/generate-caption", async (req, res) => {
   try {
     const {
       brandContext,
-      accountId,
       media = [],
       platform = "instagram",
       captionStyle = "short-sweet",
@@ -735,7 +1102,6 @@ router.post("/generate-caption", async (req, res) => {
         targetAudience?: string | null;
         socialHandles?: Record<string, string> | null;
       };
-      accountId?: number;
       media?: { base64: string; mimeType: string }[];
       platform?: string;
       captionStyle?: string;
@@ -748,40 +1114,18 @@ router.post("/generate-caption", async (req, res) => {
       return res.status(400).json({ error: "Provide media or a topic." });
     }
 
-    let brand: {
-      company: string;
-      industry: string | null;
-      description: string | null;
-      brandVoice: string | null;
-      targetAudience: string | null;
-      socialHandles: Record<string, string> | null;
-    };
-
-    if (brandContext) {
-      brand = {
-        company: brandContext.company,
-        industry: brandContext.industry || null,
-        description: brandContext.description || null,
-        brandVoice: brandContext.brandVoice || null,
-        targetAudience: brandContext.targetAudience || null,
-        socialHandles: brandContext.socialHandles || null,
-      };
-    } else if (accountId) {
-      const [account] = await db.select().from(schema.accounts).where(eq(schema.accounts.id, accountId));
-      if (!account) {
-        return res.status(404).json({ error: "Account not found." });
-      }
-      brand = {
-        company: account.company,
-        industry: account.industry,
-        description: account.description,
-        brandVoice: account.brandVoice,
-        targetAudience: account.targetAudience,
-        socialHandles: account.socialHandles as Record<string, string> | null,
-      };
-    } else {
-      return res.status(400).json({ error: "Either brandContext or accountId is required." });
+    if (!brandContext) {
+      return res.status(400).json({ error: "brandContext is required." });
     }
+
+    const brand = {
+      company: brandContext.company,
+      industry: brandContext.industry || null,
+      description: brandContext.description || null,
+      brandVoice: brandContext.brandVoice || null,
+      targetAudience: brandContext.targetAudience || null,
+      socialHandles: brandContext.socialHandles || null,
+    };
 
     const charLimit = PLATFORM_LIMITS[platform] || 2200;
     const handle = brand.socialHandles?.[platform] || "";

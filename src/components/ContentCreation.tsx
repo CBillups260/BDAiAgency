@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useRef, useCallback } from 'react';
 import {
   Image,
@@ -21,8 +22,9 @@ import ReviewGraphicGenerator from './ReviewGraphicGenerator';
 import SocialPostPreview from './SocialPostPreview';
 import CaptionWidget from './CaptionWidget';
 import AssetCreator from './AssetCreator';
+import Resizer from './Resizer';
+import Composer from './Composer';
 import RemixCreator from './RemixCreator';
-import VideoCreator from './VideoCreator';
 import QuoteGenerator from './QuoteGenerator';
 import SubjectIsolator from './SubjectIsolator';
 import GhlSchedulePanel from './GhlSchedulePanel';
@@ -88,7 +90,7 @@ const COLOR_PALETTE = [
 ] as const;
 
 export default function ContentCreation() {
-  const [contentSubTab, setContentSubTab] = useState<'captions' | 'post-creator' | 'quote-generator' | 'isolator' | 'review-graphics' | 'asset-creator' | 'remix' | 'video-creator' | 'ai-scheduler'>('captions');
+  const [contentSubTab, setContentSubTab] = useState<'captions' | 'post-creator' | 'quote-generator' | 'isolator' | 'review-graphics' | 'asset-creator' | 'resizer' | 'composer' | 'remix' | 'ai-scheduler'>('captions');
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState<RatioId>('1:1');
   const [selectedStyle, setSelectedStyle] = useState<StyleId>('none');
@@ -143,7 +145,7 @@ export default function ContentCreation() {
     const fullPrompt = buildFullPrompt();
 
     try {
-      const res = await fetch('/api/content/generate-image', {
+      const res = await authedFetch('/api/content/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -230,7 +232,7 @@ export default function ContentCreation() {
 
       {/* Sub-tabs */}
       <div className="flex items-center gap-1 mb-8 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-fit">
-        {([['captions', 'Caption Generator'], ['post-creator', 'Post Creator'], ['quote-generator', 'Quote Generator'], ['isolator', 'BG Extractor'], ['review-graphics', 'Review Graphics'], ['asset-creator', 'Products/Food/Graphics'], ['remix', 'Remix'], ['video-creator', 'AI Video'], ['ai-scheduler', 'AI Scheduler']] as const).map(([id, label]) => (
+        {([['captions', 'Caption Generator'], ['post-creator', 'Post Creator'], ['quote-generator', 'Quote Generator'], ['isolator', 'BG Extractor'], ['review-graphics', 'Review Graphics'], ['asset-creator', 'Products/Food/Graphics'], ['resizer', 'Resizer'], ['composer', 'Composer'], ['remix', 'Remix'], ['ai-scheduler', 'AI Scheduler']] as const).map(([id, label]) => (
           <button
             key={id}
             onClick={() => setContentSubTab(id)}
@@ -245,7 +247,7 @@ export default function ContentCreation() {
         ))}
       </div>
 
-      {contentSubTab === 'captions' ? <CaptionGenerator /> : contentSubTab === 'ai-scheduler' ? <GhlSchedulePanel /> : contentSubTab === 'quote-generator' ? <QuoteGenerator /> : contentSubTab === 'isolator' ? <SubjectIsolator /> : contentSubTab === 'review-graphics' ? <ReviewGraphicGenerator /> : contentSubTab === 'asset-creator' ? <AssetCreator /> : contentSubTab === 'remix' ? <RemixCreator /> : contentSubTab === 'video-creator' ? <VideoCreator /> : (
+      {contentSubTab === 'captions' ? <CaptionGenerator /> : contentSubTab === 'ai-scheduler' ? <GhlSchedulePanel /> : contentSubTab === 'quote-generator' ? <QuoteGenerator /> : contentSubTab === 'isolator' ? <SubjectIsolator /> : contentSubTab === 'review-graphics' ? <ReviewGraphicGenerator /> : contentSubTab === 'asset-creator' ? <AssetCreator /> : contentSubTab === 'resizer' ? <Resizer /> : contentSubTab === 'composer' ? <Composer /> : contentSubTab === 'remix' ? <RemixCreator /> : (
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
         {/* Caption Widget */}
         <CaptionWidget

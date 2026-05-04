@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Trash2, ChevronUp, ChevronDown, Image, Loader } from '@geist-ui/icons';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -112,7 +113,7 @@ export async function flowItemToBase64(item: FlowBucketItem): Promise<{ base64: 
     };
   }
 
-  const res = await fetch(`/api/content/image-proxy?url=${encodeURIComponent(item.url)}`);
+  const res = await authedFetch(`/api/content/image-proxy?url=${encodeURIComponent(item.url)}`);
   const blob = await res.blob();
   return new Promise((resolve) => {
     const reader = new FileReader();

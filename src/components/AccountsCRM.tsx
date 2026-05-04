@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Search,
@@ -73,7 +74,7 @@ function FontPicker({ value, onChange, inputCls, fontData, onFontDataChange }: {
   const search = useCallback((q: string) => {
     if (!q.trim()) { setResults([]); return; }
     setLoading(true);
-    fetch(`/api/content/fonts?q=${encodeURIComponent(q.trim())}`)
+    authedFetch(`/api/content/fonts?q=${encodeURIComponent(q.trim())}`)
       .then(r => r.json())
       .then(data => { setResults(data.fonts || []); setOpen(true); })
       .catch(() => {})
@@ -228,7 +229,7 @@ function BusinessSearchModal({ onSelect, onClose }: {
     setError(null);
     setResults([]);
     try {
-      const res = await fetch('/api/content/search-business', {
+      const res = await authedFetch('/api/content/search-business', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: query.trim() }),
@@ -247,7 +248,7 @@ function BusinessSearchModal({ onSelect, onClose }: {
   const selectBusiness = async (biz: BusinessResult) => {
     setLoadingDetails(biz.placeId);
     try {
-      const res = await fetch('/api/content/business-details', {
+      const res = await authedFetch('/api/content/business-details', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ placeId: biz.placeId }),

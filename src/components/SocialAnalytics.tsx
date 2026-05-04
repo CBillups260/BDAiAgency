@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useCallback } from 'react';
 import {
   Loader,
@@ -80,7 +81,7 @@ export default function SocialAnalytics() {
     setLoading(prev => ({ ...prev, [platform]: true }));
     setErrors(prev => { const n = { ...prev }; delete n[platform]; return n; });
     try {
-      const res = await fetch(`/api/social/${platform}/${encodeURIComponent(username)}`);
+      const res = await authedFetch(`/api/social/${platform}/${encodeURIComponent(username)}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setPlatformData(prev => ({ ...prev, [platform]: data }));

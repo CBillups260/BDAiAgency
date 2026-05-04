@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { Loader, Image as ImageIcon, Check } from "@geist-ui/icons";
 import { useFirestoreAccounts } from "../hooks/useFirestore";
@@ -61,7 +62,7 @@ async function urlToBase64AndMime(url: string): Promise<{ base64: string; mimeTy
 async function fetchImageBase64ViaServer(url: string): Promise<{ base64: string; mimeType: string } | null> {
   if (!url.startsWith("https://")) return null;
   try {
-    const res = await fetch("/api/content/fetch-image-base64", {
+    const res = await authedFetch("/api/content/fetch-image-base64", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
@@ -154,7 +155,7 @@ export default function CaptionGeneratorMini({
       } else {
         setImageBase64(null);
         setError(
-          "Couldn’t read this image for caption AI. If it’s from a handoff, ensure the dev server is running so we can load it securely."
+          "Couldn’t read this image for caption AI. The image may still be loading — try clicking the handoff again, or re-upload the image."
         );
       }
       setSyncingImage(false);
@@ -171,7 +172,7 @@ export default function CaptionGeneratorMini({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/content/generate-caption", {
+      const res = await authedFetch("/api/content/generate-caption", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Star,
@@ -296,7 +297,7 @@ function MiniFontPicker({ value, onChange, brandFont, brandFontData }: {
   const search = useCallback((q: string) => {
     if (!q.trim()) { setResults([]); return; }
     setLoading(true);
-    fetch(`/api/content/fonts?q=${encodeURIComponent(q.trim())}`)
+    authedFetch(`/api/content/fonts?q=${encodeURIComponent(q.trim())}`)
       .then(r => r.json())
       .then(data => { setResults(data.fonts || []); setOpen(true); })
       .catch(() => {})
@@ -1050,7 +1051,7 @@ export default function ReviewGraphicGenerator() {
     setSelectedPlace(null);
     setFetchedReviews([]);
     try {
-      const res = await fetch('/api/content/search-places', {
+      const res = await authedFetch('/api/content/search-places', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: searchQuery.trim() }),
@@ -1098,7 +1099,7 @@ export default function ReviewGraphicGenerator() {
     setHasMoreReviews(false);
     setNextPageToken(null);
     try {
-      const res = await fetch('/api/content/place-reviews', {
+      const res = await authedFetch('/api/content/place-reviews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ placeId: place.id }),
@@ -1127,7 +1128,7 @@ export default function ReviewGraphicGenerator() {
 
       // If no token yet (old cache), do a fresh first-page fetch to get one
       if (!token) {
-        const firstRes = await fetch('/api/content/place-reviews', {
+        const firstRes = await authedFetch('/api/content/place-reviews', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ placeId: selectedPlace.id }),
@@ -1141,7 +1142,7 @@ export default function ReviewGraphicGenerator() {
         }
       }
 
-      const res = await fetch('/api/content/place-reviews', {
+      const res = await authedFetch('/api/content/place-reviews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ placeId: selectedPlace.id, nextPageToken: token }),

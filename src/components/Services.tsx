@@ -1,3 +1,4 @@
+import { authedFetch } from '../lib/api';
 import React, { useState, useCallback } from 'react';
 import {
   Plus,
@@ -73,7 +74,7 @@ export default function Services() {
     setGenError(null);
     setGeneratedData(null);
     try {
-      const res = await fetch('/api/services/generate', {
+      const res = await authedFetch('/api/services/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newName.trim(), description: newDescription.trim() || undefined }),
@@ -121,7 +122,7 @@ export default function Services() {
     if (!selectedService) return;
     setRegenSection(section);
     try {
-      const res = await fetch('/api/services/regenerate-section', {
+      const res = await authedFetch('/api/services/regenerate-section', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ serviceName: selectedService.name, section }),
@@ -883,7 +884,7 @@ function SOPTab({ service, updateService }: {
     setGeneratingOutline(true);
     setError(null);
     try {
-      const res = await fetch('/api/services/sop/generate-outline', {
+      const res = await authedFetch('/api/services/sop/generate-outline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ serviceName: service.name, serviceDescription: service.description }),
@@ -906,7 +907,7 @@ function SOPTab({ service, updateService }: {
     setGeneratingPart(part.id);
     setError(null);
     try {
-      const res = await fetch('/api/services/sop/generate-part', {
+      const res = await authedFetch('/api/services/sop/generate-part', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

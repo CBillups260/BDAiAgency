@@ -170,40 +170,4 @@ router.get("/twitter/:username", async (req, res) => {
   }
 });
 
-// ─── Multi-platform fetch ────────────────────────────────
-
-router.post("/fetch-all", async (req, res) => {
-  try {
-    const { handles } = req.body as {
-      handles: { platform: string; username: string }[];
-    };
-
-    if (!handles?.length) {
-      return res.status(400).json({ error: "No social handles provided." });
-    }
-
-    const results: Record<string, any> = {};
-    const errors: Record<string, string> = {};
-
-    await Promise.allSettled(
-      handles.map(async ({ platform, username }) => {
-        try {
-          const r = await fetch(`http://localhost:${process.env.PORT || 3001}/api/social/${platform}/${encodeURIComponent(username)}`, {
-            headers: { "x-api-key": scKey() },
-          });
-          const data = await r.json();
-          if (data.error) throw new Error(data.error);
-          results[platform] = data;
-        } catch (e: any) {
-          errors[platform] = e.message;
-        }
-      })
-    );
-
-    res.json({ results, errors });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || "Failed to fetch social data." });
-  }
-});
-
 export default router;
