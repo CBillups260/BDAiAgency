@@ -5,7 +5,9 @@ import { toFile } from "openai/uploads";
 
 const router = Router();
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Placeholder fallback lets Firebase's local analysis pass (no env) construct
+// the client without throwing. At deployed runtime, OPENAI_API_KEY is set.
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "placeholder" });
 
 const VALID_RATIOS = [
   "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9",
