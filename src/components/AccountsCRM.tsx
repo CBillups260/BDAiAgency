@@ -1055,7 +1055,7 @@ function AccountFormModal({
           <button onClick={onClose} className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-[#181824] transition-colors"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div><label className={labelCls}>Company / Brand Name *</label><input className={inputCls} value={form.company} onChange={(e) => set('company', e.target.value)} required /></div>
             <div><label className={labelCls}>Contact Name</label><input className={inputCls} value={form.name} onChange={(e) => set('name', e.target.value)} /></div>
             <div><label className={labelCls}>Email</label><input type="email" className={inputCls} value={form.email} onChange={(e) => set('email', e.target.value)} /></div>
@@ -1115,7 +1115,7 @@ function AccountFormModal({
             </div>
           </div>
           <div><label className={labelCls}>Description</label><textarea className={inputCls + ' resize-none'} rows={2} value={form.description} onChange={(e) => set('description', e.target.value)} placeholder="Brief overview of the brand..." /></div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div><label className={labelCls}>Brand Voice</label><textarea className={inputCls + ' resize-none'} rows={2} value={form.brandVoice} onChange={(e) => set('brandVoice', e.target.value)} placeholder="Tone, style, personality..." /></div>
             <div><label className={labelCls}>Target Audience</label><textarea className={inputCls + ' resize-none'} rows={2} value={form.targetAudience} onChange={(e) => set('targetAudience', e.target.value)} placeholder="Who are they trying to reach?" /></div>
           </div>
@@ -1287,7 +1287,7 @@ function AccountFormModal({
 
           <div className="border-t border-[#27273A] pt-4">
             <p className="text-xs text-zinc-400 mb-3 uppercase tracking-wider">Social Handles</p>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <div><label className={labelCls}>Instagram</label><input className={inputCls} value={form.instagram} onChange={(e) => set('instagram', e.target.value)} placeholder="@handle" /></div>
               <div><label className={labelCls}>Twitter / X</label><input className={inputCls} value={form.twitter} onChange={(e) => set('twitter', e.target.value)} placeholder="@handle" /></div>
               <div><label className={labelCls}>LinkedIn</label><input className={inputCls} value={form.linkedin} onChange={(e) => set('linkedin', e.target.value)} placeholder="company-slug" /></div>
@@ -1637,7 +1637,7 @@ function OfferingFormModal({
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div><label className={labelCls}>{config.nameLabel} *</label><input className={inputCls} value={form.name} onChange={(e) => set('name', e.target.value)} required placeholder={config.namePlaceholder} /></div>
           <div><label className={labelCls}>Description</label><textarea className={inputCls + ' resize-none'} rows={2} value={form.description} onChange={(e) => set('description', e.target.value)} placeholder={config.descPlaceholder} /></div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div><label className={labelCls}>Price</label><input className={inputCls} value={form.price} onChange={(e) => set('price', e.target.value)} placeholder={config.pricePlaceholder} /></div>
             <div>
               <label className={labelCls}>Category</label>
@@ -1706,7 +1706,7 @@ function ContactFormModal({
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div><label className={labelCls}>Name *</label><input className={inputCls} value={form.name} onChange={(e) => set('name', e.target.value)} required /></div>
           <div><label className={labelCls}>Title / Role</label><input className={inputCls} value={form.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. VP of Marketing" /></div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div><label className={labelCls}>Email</label><input type="email" className={inputCls} value={form.email} onChange={(e) => set('email', e.target.value)} /></div>
             <div><label className={labelCls}>Phone</label><input className={inputCls} value={form.phone} onChange={(e) => set('phone', e.target.value)} /></div>
           </div>

@@ -8,6 +8,14 @@ body {
   background-color: #0A0A0F;
   color: #FFFFFF;
   font-family: var(--font-sans);
+  /* Prevent overscroll bounce showing white on iOS */
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Allow long URLs / words inside dense cards to wrap rather than blow out the layout on mobile */
+* {
+  word-break: break-word;
 }
 
 /* Hide scrollbar for horizontal scroll areas */
@@ -17,4 +25,42 @@ body {
 .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
+}
+
+/* iOS auto-zooms on inputs whose font-size is < 16px. Force at least 16px on
+   small screens so taps don't trigger a zoom. Desktop keeps the original size. */
+@media (max-width: 640px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* Tap target helper — apply to small icon buttons that need ≥44px on mobile. */
+.tap-target {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Safe-area helpers for iOS notch / home indicator. */
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.pl-safe {
+  padding-left: env(safe-area-inset-left);
+}
+.pr-safe {
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Horizontal scroll snap for sub-tab strips. */
+.snap-x-tabs {
+  scroll-snap-type: x proximity;
+}
+.snap-x-tabs > * {
+  scroll-snap-align: start;
 }

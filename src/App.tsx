@@ -12,6 +12,7 @@ import Tasks from './components/Tasks';
 import LoginScreen from './components/LoginScreen';
 import AccessPendingScreen from './components/AccessPendingScreen';
 import AuthGateLoader from './components/AuthGateLoader';
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { useTeamMemberProfile } from './hooks/useTeamMemberProfile';
 import { APP_ROLES, type AppUserRole } from './lib/userRoles';
@@ -58,18 +59,19 @@ const navItems: {
   id: string;
   label: string;
   icon: typeof Layout;
+  path: string;
   featured?: boolean;
 }[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: Layout },
-  { id: 'tasks', label: 'Tasks', icon: CheckSquare, featured: true },
-  { id: 'accounts', label: 'Accounts', icon: Users },
-  { id: 'content', label: 'Content Creation', icon: Edit3 },
-  { id: 'social', label: 'Social Analytics', icon: TrendingUp },
-  { id: 'prospecting', label: 'Prospecting', icon: Target },
-  { id: 'services', label: 'Services', icon: Briefcase },
-  { id: 'reports', label: 'Reports', icon: BarChart2 },
-  { id: 'financials', label: 'Financials', icon: DollarSign },
-  { id: 'settings', label: 'Settings', icon: SettingsIcon },
+  { id: 'dashboard', label: 'Dashboard', icon: Layout, path: '/dashboard' },
+  { id: 'tasks', label: 'Tasks', icon: CheckSquare, path: '/tasks', featured: true },
+  { id: 'accounts', label: 'Accounts', icon: Users, path: '/accounts' },
+  { id: 'content', label: 'Content Creation', icon: Edit3, path: '/content' },
+  { id: 'social', label: 'Social Analytics', icon: TrendingUp, path: '/social' },
+  { id: 'prospecting', label: 'Prospecting', icon: Target, path: '/prospecting' },
+  { id: 'services', label: 'Services', icon: Briefcase, path: '/services' },
+  { id: 'reports', label: 'Reports', icon: BarChart2, path: '/reports' },
+  { id: 'financials', label: 'Financials', icon: DollarSign, path: '/financials' },
+  { id: 'settings', label: 'Settings', icon: SettingsIcon, path: '/settings' },
 ];
 
 // ─── Mock Data: Accounts ────────────────────────────────────
@@ -234,12 +236,16 @@ function AuthenticatedApp({
   signOut: () => Promise<void>;
   role: AppUserRole;
 }) {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const navigate = useNavigate();
+  const location = useLocation();
+  const pathSegments = location.pathname.split('/').filter(Boolean);
+  const accountsSubTab: 'overview' | 'crm' =
+    pathSegments[0] === 'accounts' && pathSegments[1] === 'crm' ? 'crm' : 'overview';
+
   const [message, setMessage] = useState('');
   const [isCopied, setIsCopied] = useState<number | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedReportClient, setSelectedReportClient] = useState<number | null>(null);
-  const [accountsSubTab, setAccountsSubTab] = useState<'overview' | 'crm'>('overview');
   const [isAgentDropdownOpen, setIsAgentDropdownOpen] = useState(false);
   const [agentStates, setAgentStates] = useState<Record<string, boolean>>(
     Object.fromEntries(agentDefinitions.map(a => [a.id, true]))
@@ -256,21 +262,15 @@ function AuthenticatedApp({
 
   const dashboardQuickActions = useMemo(() => {
     const items = [
-      { label: "Tasks", sub: "Featured — agency task workspace", tab: "tasks" as const, icon: CheckSquare, featured: true as const },
-      { label: "Review Drafts", sub: "3 pending communications", tab: "accounts" as const, icon: FileText },
-      { label: "Service Health", sub: "1 SOP needs attention", tab: "services" as const, icon: Shield },
-      { label: "Generate Reports", sub: "1 overdue report", tab: "reports" as const, icon: BarChart2 },
-      { label: "Scope Creep Alerts", sub: "4 active warnings", tab: "financials" as const, icon: AlertTriangle },
+      { label: "Tasks", sub: "Featured — agency task workspace", path: "/tasks", icon: CheckSquare, featured: true as const },
+      { label: "Review Drafts", sub: "3 pending communications", path: "/accounts", icon: FileText },
+      { label: "Service Health", sub: "1 SOP needs attention", path: "/services", icon: Shield },
+      { label: "Generate Reports", sub: "1 overdue report", path: "/reports", icon: BarChart2 },
+      { label: "Scope Creep Alerts", sub: "4 active warnings", path: "/financials", icon: AlertTriangle },
     ];
     if (role === APP_ROLES.ADMIN) return items;
-    return items.filter((a) => a.tab !== 'financials');
+    return items.filter((a) => a.path !== '/financials');
   }, [role]);
-
-  useEffect(() => {
-    if (role !== APP_ROLES.ADMIN && (activeTab === 'financials' || activeTab === 'settings')) {
-      setActiveTab('dashboard');
-    }
-  }, [role, activeTab]);
 
   // ─── Local UI state (no backend agent system yet) ───────
   const activityItems: any[] = [];
@@ -442,7 +442,7 @@ function AuthenticatedApp({
         {dashboardQuickActions.map((action, i) => (
           <button
             key={i}
-            onClick={() => setActiveTab(action.tab)}
+            onClick={() => navigate(action.path)}
             className={`bg-[#12121A] border rounded-2xl p-5 text-left hover:border-purple-500/40 transition-all group ${
               'featured' in action && action.featured
                 ? 'border-amber-500/35 ring-1 ring-amber-500/15'
@@ -481,20 +481,22 @@ function AuthenticatedApp({
           <p className="text-zinc-400 text-sm mt-1">AI-powered client relationship management</p>
         </div>
       </div>
-      <div className="flex items-center gap-1 mb-8 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-fit">
-        {([['overview', 'AI Overview'], ['crm', 'CRM']] as const).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setAccountsSubTab(id)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              accountsSubTab === id
-                ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.2)]'
-                : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="-mx-4 sm:mx-0 mb-6 sm:mb-8 overflow-x-auto scrollbar-hide">
+        <div className="flex items-center gap-1 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-max mx-4 sm:mx-0 sm:w-fit">
+          {([['overview', 'AI Overview'], ['crm', 'CRM']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => navigate(id === 'overview' ? '/accounts' : `/accounts/${id}`)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+                accountsSubTab === id
+                  ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.2)]'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {accountsSubTab === 'crm' ? <AccountsCRM /> : (<>
@@ -872,23 +874,39 @@ function AuthenticatedApp({
   );
 
   // ─── Content Router ─────────────────────────────────────
-  const renderContent = () => {
-    switch (activeTab) {
-      case 'dashboard': return renderDashboard();
-      case 'accounts': return renderAccounts();
-      case 'content': return <ContentCreation />;
-      case 'social': return <SocialAnalytics />;
-      case 'prospecting': return <Prospecting user={user} />;
-      case 'services': return <Services />;
-      case 'reports': return renderReports();
-      case 'financials':
-        return role === APP_ROLES.ADMIN ? <FinanceDashboard /> : renderDashboard();
-      case 'tasks': return <Tasks user={user} />;
-      case 'settings':
-        return role === APP_ROLES.ADMIN ? <Settings user={user} /> : renderDashboard();
-      default: return renderDashboard();
-    }
-  };
+  const isAdmin = role === APP_ROLES.ADMIN;
+  const renderContent = () => (
+    <Routes>
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/dashboard" element={renderDashboard()} />
+      <Route path="/tasks" element={<Tasks user={user} />} />
+      <Route path="/accounts" element={renderAccounts()} />
+      <Route path="/accounts/:view" element={renderAccounts()} />
+      <Route path="/content" element={<ContentCreation />} />
+      <Route path="/content/:tool" element={<ContentCreation />} />
+      <Route path="/social" element={<SocialAnalytics />} />
+      <Route path="/prospecting" element={<Prospecting user={user} />} />
+      <Route path="/services" element={<Services />} />
+      <Route path="/reports" element={renderReports()} />
+      <Route
+        path="/financials"
+        element={isAdmin ? <FinanceDashboard /> : <Navigate to="/dashboard" replace />}
+      />
+      <Route
+        path="/settings"
+        element={isAdmin ? <Settings user={user} /> : <Navigate to="/dashboard" replace />}
+      />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
+  );
+
+  // ─── Mobile bottom nav items (most-used routes) ─────────
+  const mobileBottomNavItems = [
+    { id: 'dashboard', label: 'Home', icon: Layout, path: '/dashboard' },
+    { id: 'tasks', label: 'Tasks', icon: CheckSquare, path: '/tasks' },
+    { id: 'content', label: 'Content', icon: Edit3, path: '/content' },
+    { id: 'accounts', label: 'Accounts', icon: Users, path: '/accounts' },
+  ];
 
   // ─── Layout ─────────────────────────────────────────────
   return (
@@ -927,12 +945,14 @@ function AuthenticatedApp({
         <nav className="flex-1 px-4 py-4 space-y-2 overflow-y-auto">
           {visibleNavItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
+            const isActive =
+              location.pathname === item.path ||
+              location.pathname.startsWith(item.path + '/');
             return (
               <button
                 key={item.id}
                 onClick={() => {
-                  setActiveTab(item.id);
+                  navigate(item.path);
                   setIsMobileMenuOpen(false);
                 }}
                 className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium transition-all ${
@@ -985,9 +1005,13 @@ function AuthenticatedApp({
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
         {/* Top Header */}
-        <header className="h-16 border-b border-[#27273A] bg-[#0A0A0F]/80 backdrop-blur-md sticky top-0 z-20 flex items-center justify-between px-6 lg:px-8 shrink-0">
-          <div className="flex items-center gap-4">
-            <button onClick={() => setIsMobileMenuOpen(true)} className="lg:hidden text-zinc-400 hover:text-white">
+        <header className="h-16 border-b border-[#27273A] bg-[#0A0A0F]/80 backdrop-blur-md sticky top-0 z-20 flex items-center justify-between px-4 lg:px-8 shrink-0 pt-safe">
+          <div className="flex items-center gap-2 lg:gap-4">
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="lg:hidden text-zinc-400 hover:text-white tap-target -ml-2 flex items-center justify-center"
+              aria-label="Open menu"
+            >
               <Menu size={24} />
             </button>
             <h1 className="text-lg font-medium text-white hidden sm:block">AI Agent Dashboard</h1>
@@ -1118,12 +1142,53 @@ function AuthenticatedApp({
         </header>
 
         {/* Scrollable Content Area */}
-        <div className="flex-1 overflow-y-auto p-6 lg:p-8">
+        <div className="flex-1 overflow-y-auto p-4 lg:p-8 pb-24 lg:pb-8">
           <AnimatePresence mode="wait">
             {renderContent()}
           </AnimatePresence>
         </div>
       </main>
+
+      {/* Mobile Bottom Nav (lg:hidden) */}
+      <nav
+        className="fixed bottom-0 inset-x-0 z-40 lg:hidden bg-[#0A0A0F]/95 backdrop-blur-lg border-t border-[#27273A] pb-safe"
+        aria-label="Primary"
+      >
+        <ul className="flex items-stretch justify-around">
+          {mobileBottomNavItems.map((item) => {
+            const Icon = item.icon;
+            const isActive =
+              location.pathname === item.path ||
+              location.pathname.startsWith(item.path + '/');
+            return (
+              <li key={item.id} className="flex-1">
+                <button
+                  onClick={() => navigate(item.path)}
+                  className={`w-full flex flex-col items-center justify-center gap-1 py-2 tap-target transition-colors ${
+                    isActive ? 'text-purple-400' : 'text-zinc-500 active:text-zinc-200'
+                  }`}
+                  aria-label={item.label}
+                  aria-current={isActive ? 'page' : undefined}
+                >
+                  <Icon size={20} />
+                  <span className="text-[10px] font-medium leading-none">{item.label}</span>
+                </button>
+              </li>
+            );
+          })}
+          <li className="flex-1">
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="w-full flex flex-col items-center justify-center gap-1 py-2 tap-target text-zinc-500 active:text-zinc-200 transition-colors"
+              aria-label="More navigation"
+            >
+              <Menu size={20} />
+              <span className="text-[10px] font-medium leading-none">More</span>
+            </button>
+          </li>
+        </ul>
+      </nav>
+
       <FlowBucket />
     </div>
   );

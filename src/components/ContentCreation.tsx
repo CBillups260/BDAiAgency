@@ -1,5 +1,7 @@
 import { authedFetch } from '../lib/api';
 import React, { useState, useRef, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { usePersistedState } from '../hooks/usePersistedState';
 import {
   Image,
   Layers,
@@ -89,16 +91,26 @@ const COLOR_PALETTE = [
   { hex: '#C4B5A0', name: 'Tan' },
 ] as const;
 
+type ContentSubTab = 'captions' | 'post-creator' | 'quote-generator' | 'isolator' | 'review-graphics' | 'asset-creator' | 'resizer' | 'composer' | 'remix' | 'ai-scheduler';
+const VALID_CONTENT_SUB_TABS: ContentSubTab[] = ['captions', 'post-creator', 'quote-generator', 'isolator', 'review-graphics', 'asset-creator', 'resizer', 'composer', 'remix', 'ai-scheduler'];
+
 export default function ContentCreation() {
-  const [contentSubTab, setContentSubTab] = useState<'captions' | 'post-creator' | 'quote-generator' | 'isolator' | 'review-graphics' | 'asset-creator' | 'resizer' | 'composer' | 'remix' | 'ai-scheduler'>('captions');
-  const [prompt, setPrompt] = useState('');
-  const [aspectRatio, setAspectRatio] = useState<RatioId>('1:1');
-  const [selectedStyle, setSelectedStyle] = useState<StyleId>('none');
-  const [selectedColors, setSelectedColors] = useState<string[]>([]);
+  const navigate = useNavigate();
+  const { tool } = useParams<{ tool?: string }>();
+  const contentSubTab: ContentSubTab = (VALID_CONTENT_SUB_TABS as string[]).includes(tool || '')
+    ? (tool as ContentSubTab)
+    : 'captions';
+  const setContentSubTab = (next: ContentSubTab) => {
+    navigate(next === 'captions' ? '/content' : `/content/${next}`);
+  };
+  const [prompt, setPrompt] = usePersistedState<string>('content.prompt', '');
+  const [aspectRatio, setAspectRatio] = usePersistedState<RatioId>('content.aspectRatio', '1:1');
+  const [selectedStyle, setSelectedStyle] = usePersistedState<StyleId>('content.selectedStyle', 'none');
+  const [selectedColors, setSelectedColors] = usePersistedState<string[]>('content.selectedColors', []);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [canvasView, setCanvasView] = useState<'canvas' | 'preview'>('canvas');
-  const [layers, setLayers] = useState<ContentLayer[]>([
+  const [canvasView, setCanvasView] = usePersistedState<'canvas' | 'preview'>('content.canvasView', 'canvas');
+  const [layers, setLayers] = usePersistedState<ContentLayer[]>('content.layers', [
     { id: 'bg', name: 'Background', type: 'background', visible: true },
   ]);
 
@@ -231,20 +243,22 @@ export default function ContentCreation() {
       </div>
 
       {/* Sub-tabs */}
-      <div className="flex items-center gap-1 mb-8 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-fit">
-        {([['captions', 'Caption Generator'], ['post-creator', 'Post Creator'], ['quote-generator', 'Quote Generator'], ['isolator', 'BG Extractor'], ['review-graphics', 'Review Graphics'], ['asset-creator', 'Products/Food/Graphics'], ['resizer', 'Resizer'], ['composer', 'Composer'], ['remix', 'Remix'], ['ai-scheduler', 'AI Scheduler']] as const).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setContentSubTab(id)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              contentSubTab === id
-                ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.2)]'
-                : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="-mx-4 sm:mx-0 mb-6 sm:mb-8 overflow-x-auto scrollbar-hide snap-x-tabs">
+        <div className="flex items-center gap-1 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-max mx-4 sm:mx-0 sm:w-fit">
+          {([['captions', 'Caption Generator'], ['post-creator', 'Post Creator'], ['quote-generator', 'Quote Generator'], ['isolator', 'BG Extractor'], ['review-graphics', 'Review Graphics'], ['asset-creator', 'Products/Food/Graphics'], ['resizer', 'Resizer'], ['composer', 'Composer'], ['remix', 'Remix'], ['ai-scheduler', 'AI Scheduler']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setContentSubTab(id)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap shrink-0 ${
+                contentSubTab === id
+                  ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.2)]'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {contentSubTab === 'captions' ? <CaptionGenerator /> : contentSubTab === 'ai-scheduler' ? <GhlSchedulePanel /> : contentSubTab === 'quote-generator' ? <QuoteGenerator /> : contentSubTab === 'isolator' ? <SubjectIsolator /> : contentSubTab === 'review-graphics' ? <ReviewGraphicGenerator /> : contentSubTab === 'asset-creator' ? <AssetCreator /> : contentSubTab === 'resizer' ? <Resizer /> : contentSubTab === 'composer' ? <Composer /> : contentSubTab === 'remix' ? <RemixCreator /> : (

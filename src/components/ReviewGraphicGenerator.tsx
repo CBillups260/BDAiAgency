@@ -22,6 +22,7 @@ import { addToFlowBucket } from './FlowBucket';
 import { motion, AnimatePresence } from 'motion/react';
 import { toPng } from 'html-to-image';
 import { useFirestoreAccounts } from '../hooks/useFirestore';
+import { usePersistedState } from '../hooks/usePersistedState';
 import SocialPostPreview from './SocialPostPreview';
 import CaptionWidget from './CaptionWidget';
 
@@ -923,41 +924,41 @@ export default function ReviewGraphicGenerator() {
   const [bucket, setBucket] = useState<BucketItem[]>(() => loadBucket());
 
   // Core state
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
-  const [review, setReview] = useState<ReviewData>({
+  const [selectedAccountId, setSelectedAccountId] = usePersistedState<string | null>('review.accountId', null);
+  const [review, setReview] = usePersistedState<ReviewData>('review.review', {
     reviewerName: '',
     platform: 'google',
     rating: 5,
     text: '',
     localGuideLevel: undefined,
   });
-  const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
-  const [overlayStyle, setOverlayStyle] = useState<OverlayStyleId>('dual-tone');
-  const [graphicFormat, setGraphicFormat] = useState<FormatId>('fb-mobile');
-  const [textLayout, setTextLayout] = useState<TextLayoutId>('card');
-  const [fontOverride, setFontOverride] = useState<string>('');
-  const [customColor1, setCustomColor1] = useState<string>('');
-  const [customColor2, setCustomColor2] = useState<string>('');
-  const [useCustomColors, setUseCustomColors] = useState(false);
+  const [backgroundImage, setBackgroundImage] = usePersistedState<string | null>('review.backgroundImage', null);
+  const [overlayStyle, setOverlayStyle] = usePersistedState<OverlayStyleId>('review.overlayStyle', 'dual-tone');
+  const [graphicFormat, setGraphicFormat] = usePersistedState<FormatId>('review.graphicFormat', 'fb-mobile');
+  const [textLayout, setTextLayout] = usePersistedState<TextLayoutId>('review.textLayout', 'card');
+  const [fontOverride, setFontOverride] = usePersistedState<string>('review.fontOverride', '');
+  const [customColor1, setCustomColor1] = usePersistedState<string>('review.customColor1', '');
+  const [customColor2, setCustomColor2] = usePersistedState<string>('review.customColor2', '');
+  const [useCustomColors, setUseCustomColors] = usePersistedState<boolean>('review.useCustomColors', false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Google search state
-  const [reviewSource, setReviewSource] = useState<'manual' | 'google'>('manual');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [reviewSource, setReviewSource] = usePersistedState<'manual' | 'google'>('review.source', 'manual');
+  const [searchQuery, setSearchQuery] = usePersistedState<string>('review.searchQuery', '');
   const [searchResults, setSearchResults] = useState<PlaceResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
-  const [fetchedReviews, setFetchedReviews] = useState<FetchedReview[]>([]);
+  const [selectedPlace, setSelectedPlace] = usePersistedState<PlaceResult | null>('review.selectedPlace', null);
+  const [fetchedReviews, setFetchedReviews] = usePersistedState<FetchedReview[]>('review.fetchedReviews', []);
   const [fetchingReviews, setFetchingReviews] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [reviewsCached, setReviewsCached] = useState(false);
   const [cacheDate, setCacheDate] = useState<number | null>(null);
-  const [photosOnly, setPhotosOnly] = useState(false);
+  const [photosOnly, setPhotosOnly] = usePersistedState<boolean>('review.photosOnly', false);
   const [hasMoreReviews, setHasMoreReviews] = useState(false);
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
-  const [bundledCaptions, setBundledCaptions] = useState<string[]>([]);
+  const [bundledCaptions, setBundledCaptions] = usePersistedState<string[]>('review.bundledCaptions', []);
 
   // Refs
   const graphicRef = useRef<HTMLDivElement>(null);

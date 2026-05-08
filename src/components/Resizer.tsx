@@ -3,6 +3,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Upload, Loader, Plus, Download, Trash2, X } from '@geist-ui/icons';
 import { motion } from 'motion/react';
 import { useFirestoreAccounts } from '../hooks/useFirestore';
+import { usePersistedState } from '../hooks/usePersistedState';
 
 const MODELS = [
   { id: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro', sub: 'Higher quality, slower' },
@@ -36,20 +37,20 @@ interface GeneratedAsset {
 
 export default function Resizer() {
   const { accounts, loading: accountsLoading } = useFirestoreAccounts();
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = usePersistedState<string | null>('resizer.accountId', null);
 
-  const [refImage, setRefImage] = useState<RefImage | null>(null);
-  const [model, setModel] = useState('gemini-3-pro-image-preview');
-  const [ratio, setRatio] = useState('1:1');
-  const [count, setCount] = useState(1);
+  const [refImage, setRefImage] = usePersistedState<RefImage | null>('resizer.refImage', null);
+  const [model, setModel] = usePersistedState<string>('resizer.model', 'gemini-3-pro-image-preview');
+  const [ratio, setRatio] = usePersistedState<string>('resizer.ratio', '1:1');
+  const [count, setCount] = usePersistedState<number>('resizer.count', 1);
   const [dragOver, setDragOver] = useState(false);
 
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [assets, setAssets] = useState<GeneratedAsset[]>([]);
+  const [assets, setAssets] = usePersistedState<GeneratedAsset[]>('resizer.assets', []);
   const [error, setError] = useState<string | null>(null);
-  const [customW, setCustomW] = useState('');
-  const [customH, setCustomH] = useState('');
+  const [customW, setCustomW] = usePersistedState<string>('resizer.customW', '');
+  const [customH, setCustomH] = usePersistedState<string>('resizer.customH', '');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isPresetRatio = RATIOS.some((r) => r.id === ratio);

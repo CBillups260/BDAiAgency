@@ -16,6 +16,7 @@ import { motion } from "motion/react";
 import { ref, uploadBytes, getDownloadURL, getBlob } from "firebase/storage";
 import { storage } from "../lib/firebase";
 import { useFirestoreAccounts, useBusinessSettings } from "../hooks/useFirestore";
+import { usePersistedState } from "../hooks/usePersistedState";
 import { getGhlLocationId, getGhlPrivateIntegrationToken } from "../lib/utils";
 import CaptionGeneratorMini from "./CaptionGeneratorMini";
 import { useAuth } from "../hooks/useAuth";
@@ -315,15 +316,15 @@ export default function GhlSchedulePanel() {
     };
   }, [firestoreAccounts]);
 
-  const [selectedClientId, setSelectedClientId] = useState("");
+  const [selectedClientId, setSelectedClientId] = usePersistedState<string>("ghl.selectedClientId", "");
   /** Handoff row currently loaded into the composer (queue “now” item). */
   const [activeHandoffId, setActiveHandoffId] = useState<string | null>(null);
-  const [caption, setCaption] = useState("");
-  const [scheduleImageUrl, setScheduleImageUrl] = useState<string | null>(null);
-  const [scheduleImagePreview, setScheduleImagePreview] = useState<string | null>(null);
+  const [caption, setCaption] = usePersistedState<string>("ghl.caption", "");
+  const [scheduleImageUrl, setScheduleImageUrl] = usePersistedState<string | null>("ghl.scheduleImageUrl", null);
+  const [scheduleImagePreview, setScheduleImagePreview] = usePersistedState<string | null>("ghl.scheduleImagePreview", null);
   /** Raw pixels from the file picker — caption AI uses this so we never fetch blob:/Firebase in the browser. */
-  const [scheduleImageDataBase64, setScheduleImageDataBase64] = useState<string | null>(null);
-  const [scheduleImageDataMimeType, setScheduleImageDataMimeType] = useState("image/jpeg");
+  const [scheduleImageDataBase64, setScheduleImageDataBase64] = usePersistedState<string | null>("ghl.scheduleImageDataBase64", null);
+  const [scheduleImageDataMimeType, setScheduleImageDataMimeType] = usePersistedState<string>("ghl.scheduleImageDataMimeType", "image/jpeg");
   const [imageUploading, setImageUploading] = useState(false);
   const postImageInputRef = useRef<HTMLInputElement>(null);
 
@@ -334,12 +335,12 @@ export default function GhlSchedulePanel() {
     activeHandoffIdRef.current = activeHandoffId;
   }, [activeHandoffId]);
 
-  const [timezone, setTimezone] = useState("America/New_York");
-  const [timezoneLabel, setTimezoneLabel] = useState<string | null>(null);
-  const [minGapHours, setMinGapHours] = useState(4);
-  const [windowDays, setWindowDays] = useState(14);
-  const [preferences, setPreferences] = useState("");
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [timezone, setTimezone] = usePersistedState<string>("ghl.timezone", "America/New_York");
+  const [timezoneLabel, setTimezoneLabel] = usePersistedState<string | null>("ghl.timezoneLabel", null);
+  const [minGapHours, setMinGapHours] = usePersistedState<number>("ghl.minGapHours", 4);
+  const [windowDays, setWindowDays] = usePersistedState<number>("ghl.windowDays", 14);
+  const [preferences, setPreferences] = usePersistedState<string>("ghl.preferences", "");
+  const [showAdvanced, setShowAdvanced] = usePersistedState<boolean>("ghl.showAdvanced", false);
 
   const [ghlAccounts, setGhlAccounts] = useState<GhlAccountRow[]>([]);
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set());
@@ -355,10 +356,10 @@ export default function GhlSchedulePanel() {
   const [dayPostCounts, setDayPostCounts] = useState<Record<string, number>>({});
   const [calendarLoading, setCalendarLoading] = useState(false);
   /** Value for `input type="datetime-local"` — manual slot without AI. */
-  const [manualLocalDatetime, setManualLocalDatetime] = useState("");
-  const [mediaUrlsText, setMediaUrlsText] = useState("");
-  const [locationOverride, setLocationOverride] = useState("");
-  const [userIdOverride, setUserIdOverride] = useState("");
+  const [manualLocalDatetime, setManualLocalDatetime] = usePersistedState<string>("ghl.manualLocalDatetime", "");
+  const [mediaUrlsText, setMediaUrlsText] = usePersistedState<string>("ghl.mediaUrlsText", "");
+  const [locationOverride, setLocationOverride] = usePersistedState<string>("ghl.locationOverride", "");
+  const [userIdOverride, setUserIdOverride] = usePersistedState<string>("ghl.userIdOverride", "");
   const [status, setStatus] = useState<{
     configured: boolean;
     hasEnvUserId?: boolean;

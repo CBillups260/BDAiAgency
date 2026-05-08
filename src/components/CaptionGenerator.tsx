@@ -18,6 +18,7 @@ import {
 } from '@geist-ui/icons';
 import { motion, AnimatePresence } from 'motion/react';
 import { useFirestoreAccounts } from '../hooks/useFirestore';
+import { usePersistedState } from '../hooks/usePersistedState';
 import SocialPostPreview from './SocialPostPreview';
 
 const PLATFORMS = [
@@ -89,17 +90,17 @@ function formatSize(bytes: number) {
 export default function CaptionGenerator() {
   const { accounts, loading: accountsLoading } = useFirestoreAccounts();
 
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
-  const [platform, setPlatform] = useState('instagram');
-  const [captionStyle, setCaptionStyle] = useState('short-sweet');
-  const [context, setContext] = useState('');
-  const [includeHashtags, setIncludeHashtags] = useState(true);
-  const [includeEmojis, setIncludeEmojis] = useState(false);
-  const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = usePersistedState<string | null>('caption.accountId', null);
+  const [platform, setPlatform] = usePersistedState<string>('caption.platform', 'instagram');
+  const [captionStyle, setCaptionStyle] = usePersistedState<string>('caption.style', 'short-sweet');
+  const [context, setContext] = usePersistedState<string>('caption.context', '');
+  const [includeHashtags, setIncludeHashtags] = usePersistedState<boolean>('caption.hashtags', true);
+  const [includeEmojis, setIncludeEmojis] = usePersistedState<boolean>('caption.emojis', false);
+  const [mediaFiles, setMediaFiles] = usePersistedState<MediaFile[]>('caption.mediaFiles', []);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [selectedCaptionIdx, setSelectedCaptionIdx] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<CaptionResult | null>(null);
+  const [result, setResult] = usePersistedState<CaptionResult | null>('caption.result', null);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [showOptions, setShowOptions] = useState(true);

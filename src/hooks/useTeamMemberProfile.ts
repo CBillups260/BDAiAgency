@@ -54,9 +54,14 @@ export function useTeamMemberProfile(uid: string | null) {
       },
       (err) => {
         console.error("[team_members] listener error:", err?.code, err?.message);
-        setProfile(null);
         setFirestoreError(err?.code || err?.message || "firestore_error");
         setLoading(false);
+        // Intentionally do NOT clear `profile` here. Firestore listeners can
+        // emit transient errors (network blips, tab idle reconnects) and
+        // wiping the profile would unmount AuthenticatedApp and reset all
+        // in-page state. Retain the last-known-good profile across these
+        // transient errors. Only the initial-load case (when profile is
+        // already null) keeps the access/error screen visible.
       }
     );
     return () => unsub();

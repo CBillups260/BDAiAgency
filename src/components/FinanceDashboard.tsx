@@ -152,20 +152,22 @@ export default function FinanceDashboard() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex items-center gap-1 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-fit">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              activeTab === tab.id
-                ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.2)]'
-                : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className="-mx-4 sm:mx-0 overflow-x-auto scrollbar-hide">
+        <div className="flex items-center gap-1 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-max mx-4 sm:mx-0 sm:w-fit">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+                activeTab === tab.id
+                  ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.2)]'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <AnimatePresence mode="wait">

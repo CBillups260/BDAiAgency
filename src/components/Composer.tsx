@@ -3,6 +3,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Upload, Loader, Plus, Download, Trash2, X, AtSign } from '@geist-ui/icons';
 import { motion } from 'motion/react';
 import { useFirestoreAccounts } from '../hooks/useFirestore';
+import { usePersistedState } from '../hooks/usePersistedState';
 
 const MODELS = [
   { id: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro', sub: 'Higher quality, slower' },
@@ -47,24 +48,24 @@ interface GeneratedAsset {
 
 export default function Composer() {
   const { accounts, loading: accountsLoading } = useFirestoreAccounts();
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = usePersistedState<string | null>('composer.accountId', null);
 
-  const [references, setReferences] = useState<Reference[]>([]);
-  const [refCounter, setRefCounter] = useState(1);
-  const [prompt, setPrompt] = useState('');
-  const [model, setModel] = useState('gemini-3-pro-image-preview');
-  const [ratio, setRatio] = useState('1:1');
-  const [thinkingLevel, setThinkingLevel] = useState('');
-  const [count, setCount] = useState(1);
+  const [references, setReferences] = usePersistedState<Reference[]>('composer.references', []);
+  const [refCounter, setRefCounter] = usePersistedState<number>('composer.refCounter', 1);
+  const [prompt, setPrompt] = usePersistedState<string>('composer.prompt', '');
+  const [model, setModel] = usePersistedState<string>('composer.model', 'gemini-3-pro-image-preview');
+  const [ratio, setRatio] = usePersistedState<string>('composer.ratio', '1:1');
+  const [thinkingLevel, setThinkingLevel] = usePersistedState<string>('composer.thinkingLevel', '');
+  const [count, setCount] = usePersistedState<number>('composer.count', 1);
   const [dragOver, setDragOver] = useState(false);
 
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [assets, setAssets] = useState<GeneratedAsset[]>([]);
+  const [assets, setAssets] = usePersistedState<GeneratedAsset[]>('composer.assets', []);
   const [error, setError] = useState<string | null>(null);
 
-  const [customW, setCustomW] = useState('');
-  const [customH, setCustomH] = useState('');
+  const [customW, setCustomW] = usePersistedState<string>('composer.customW', '');
+  const [customH, setCustomH] = usePersistedState<string>('composer.customH', '');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);

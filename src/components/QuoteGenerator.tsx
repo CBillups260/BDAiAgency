@@ -14,6 +14,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { toPng } from 'html-to-image';
 import { addToFlowBucket } from './FlowBucket';
 import { useFirestoreAccounts, type FirestoreAccount } from '../hooks/useFirestore';
+import { usePersistedState } from '../hooks/usePersistedState';
 
 // ─── Google Fonts catalog ─────────────────────────────────
 const GOOGLE_FONTS = [
@@ -111,19 +112,19 @@ const LOGO_POS_STYLES: Record<LogoPosition, React.CSSProperties> = {
 export default function QuoteGenerator() {
   // Brand
   const { accounts, loading: accountsLoading } = useFirestoreAccounts();
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = usePersistedState<string | null>('quote.accountId', null);
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId) || null;
 
   // Background
-  const [bgImage, setBgImage] = useState<string | null>(null);
-  const [bgBase64, setBgBase64] = useState<string | null>(null);
-  const [bgMime, setBgMime] = useState<string>('image/jpeg');
+  const [bgImage, setBgImage] = usePersistedState<string | null>('quote.bgImage', null);
+  const [bgBase64, setBgBase64] = usePersistedState<string | null>('quote.bgBase64', null);
+  const [bgMime, setBgMime] = usePersistedState<string>('quote.bgMime', 'image/jpeg');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Quote
-  const [quoteText, setQuoteText] = useState('');
-  const [attribution, setAttribution] = useState('');
+  const [quoteText, setQuoteText] = usePersistedState<string>('quote.text', '');
+  const [attribution, setAttribution] = usePersistedState<string>('quote.attribution', '');
 
   // AI suggestions
   const [suggestions, setSuggestions] = useState<SuggestedQuote[]>([]);
@@ -131,23 +132,23 @@ export default function QuoteGenerator() {
   const [suggestError, setSuggestError] = useState<string | null>(null);
 
   // Font mode
-  const [fontMode, setFontMode] = useState<'single' | 'dual'>('dual');
-  const [primaryFont, setPrimaryFont] = useState('Playfair Display');
-  const [secondaryFont, setSecondaryFont] = useState('Montserrat');
-  const [fontSize, setFontSize] = useState(32);
-  const [textColor, setTextColor] = useState('#FFFFFF');
-  const [textAlign, setTextAlign] = useState<TextAlign>('center');
-  const [textShadow, setTextShadow] = useState(true);
+  const [fontMode, setFontMode] = usePersistedState<'single' | 'dual'>('quote.fontMode', 'dual');
+  const [primaryFont, setPrimaryFont] = usePersistedState<string>('quote.primaryFont', 'Playfair Display');
+  const [secondaryFont, setSecondaryFont] = usePersistedState<string>('quote.secondaryFont', 'Montserrat');
+  const [fontSize, setFontSize] = usePersistedState<number>('quote.fontSize', 32);
+  const [textColor, setTextColor] = usePersistedState<string>('quote.textColor', '#FFFFFF');
+  const [textAlign, setTextAlign] = usePersistedState<TextAlign>('quote.textAlign', 'center');
+  const [textShadow, setTextShadow] = usePersistedState<boolean>('quote.textShadow', true);
 
   // Overlay
-  const [overlayOpacity, setOverlayOpacity] = useState(0.45);
-  const [overlayColor, setOverlayColor] = useState('#000000');
+  const [overlayOpacity, setOverlayOpacity] = usePersistedState<number>('quote.overlayOpacity', 0.45);
+  const [overlayColor, setOverlayColor] = usePersistedState<string>('quote.overlayColor', '#000000');
 
   // Logo
-  const [showLogo, setShowLogo] = useState(false);
-  const [logoVariant, setLogoVariant] = useState<'primary' | 'light' | 'dark'>('light');
-  const [logoPosition, setLogoPosition] = useState<LogoPosition>('bottom-right');
-  const [logoSize, setLogoSize] = useState(60);
+  const [showLogo, setShowLogo] = usePersistedState<boolean>('quote.showLogo', false);
+  const [logoVariant, setLogoVariant] = usePersistedState<'primary' | 'light' | 'dark'>('quote.logoVariant', 'light');
+  const [logoPosition, setLogoPosition] = usePersistedState<LogoPosition>('quote.logoPosition', 'bottom-right');
+  const [logoSize, setLogoSize] = usePersistedState<number>('quote.logoSize', 60);
 
   // Custom fonts
   const [customFonts, setCustomFonts] = useState<CustomFont[]>([]);

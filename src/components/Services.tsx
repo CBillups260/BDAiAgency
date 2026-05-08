@@ -471,7 +471,7 @@ export default function Services() {
                       <p className="text-[9px] font-medium text-zinc-500 uppercase tracking-wider">Pricing Recommendation</p>
                       <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium">{generatedData.margin}% margin</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 mb-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
                       {generatedData.pricingTiers?.map((tier, i) => (
                         <div key={i} className={`bg-[#0A0A0F] rounded-xl p-3 border ${i === 1 ? 'border-purple-500/30' : 'border-[#27273A]'}`}>
                           <p className="text-[10px] font-semibold text-purple-300 mb-0.5">{tier.name}</p>
@@ -617,21 +617,23 @@ export default function Services() {
         </div>
 
         {/* Tab bar */}
-        <div className="flex items-center gap-1 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-fit">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setDetailTab(tab.id)}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all ${
-                detailTab === tab.id
-                  ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.2)]'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              {tab.icon}
-              {tab.label}
-            </button>
-          ))}
+        <div className="-mx-4 sm:mx-0 overflow-x-auto scrollbar-hide">
+          <div className="flex items-center gap-1 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-max mx-4 sm:mx-0 sm:w-fit">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setDetailTab(tab.id)}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all whitespace-nowrap shrink-0 ${
+                  detailTab === tab.id
+                    ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.2)]'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Tab content */}

@@ -11,6 +11,7 @@ import {
 } from '@geist-ui/icons';
 import { motion, AnimatePresence } from 'motion/react';
 import { addToFlowBucket } from './FlowBucket';
+import { usePersistedState } from '../hooks/usePersistedState';
 
 const RATIOS = [
   { id: '1:1', label: '1:1', w: 1, h: 1 },
@@ -26,18 +27,18 @@ const RATIOS = [
 
 export default function SubjectIsolator() {
   // Input
-  const [sourceImage, setSourceImage] = useState<string | null>(null);
-  const [sourceBase64, setSourceBase64] = useState<string | null>(null);
-  const [sourceMime, setSourceMime] = useState('image/jpeg');
+  const [sourceImage, setSourceImage] = usePersistedState<string | null>('isolator.sourceImage', null);
+  const [sourceBase64, setSourceBase64] = usePersistedState<string | null>('isolator.sourceBase64', null);
+  const [sourceMime, setSourceMime] = usePersistedState<string>('isolator.sourceMime', 'image/jpeg');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Options
-  const [aspectRatio, setAspectRatio] = useState('1:1');
+  const [aspectRatio, setAspectRatio] = usePersistedState<string>('isolator.aspectRatio', '1:1');
 
   // Result
-  const [resultImage, setResultImage] = useState<string | null>(null);
-  const [resultBase64, setResultBase64] = useState<string | null>(null);
+  const [resultImage, setResultImage] = usePersistedState<string | null>('isolator.resultImage', null);
+  const [resultBase64, setResultBase64] = usePersistedState<string | null>('isolator.resultBase64', null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

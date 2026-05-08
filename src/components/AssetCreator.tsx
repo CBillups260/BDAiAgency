@@ -1,5 +1,6 @@
 import { authedFetch } from '../lib/api';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { usePersistedState } from '../hooks/usePersistedState';
 import {
   Loader,
   Download,
@@ -319,12 +320,12 @@ interface GeneratedAsset {
 // ─── Component ───────────────────────────────────────────
 
 export default function AssetCreator() {
-  const [assetSubTab, setAssetSubTab] = useState<AssetSubTab>('product');
-  const [assetCategory, setAssetCategory] = useState<AssetCategory>('food');
+  const [assetSubTab, setAssetSubTab] = usePersistedState<AssetSubTab>('asset.subTab', 'product');
+  const [assetCategory, setAssetCategory] = usePersistedState<AssetCategory>('asset.category', 'food');
 
   // Account
   const { accounts, loading: accountsLoading } = useFirestoreAccounts();
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = usePersistedState<string | null>('asset.accountId', null);
   const { account: fullAccount } = useFirestoreAccount(selectedAccountId);
   const { assets: savedAssets, addAsset: addMediaAsset, removeAsset: removeMediaAsset } = useFirestoreMediaAssets(selectedAccountId);
   const [saving, setSaving] = useState<number | null>(null);
@@ -332,16 +333,16 @@ export default function AssetCreator() {
   const [sendingToCanva, setSendingToCanva] = useState<number | null>(null);
 
   // Core
-  const [dishName, setDishName] = useState('');
-  const [model, setModel] = useState('gemini-3-pro-image-preview');
-  const [resolution, setResolution] = useState('1K');
-  const [thinkingLevel, setThinkingLevel] = useState('');
-  const [mode, setMode] = useState('full');
-  const [variationNotes, setVariationNotes] = useState('');
-  const [refImage, setRefImage] = useState<{ base64: string; mimeType: string; preview: string } | null>(null);
+  const [dishName, setDishName] = usePersistedState<string>('asset.dishName', '');
+  const [model, setModel] = usePersistedState<string>('asset.model', 'gemini-3-pro-image-preview');
+  const [resolution, setResolution] = usePersistedState<string>('asset.resolution', '1K');
+  const [thinkingLevel, setThinkingLevel] = usePersistedState<string>('asset.thinkingLevel', '');
+  const [mode, setMode] = usePersistedState<string>('asset.mode', 'full');
+  const [variationNotes, setVariationNotes] = usePersistedState<string>('asset.variationNotes', '');
+  const [refImage, setRefImage] = usePersistedState<{ base64: string; mimeType: string; preview: string } | null>('asset.refImage', null);
 
   // Style options
-  const [angle, setAngle] = useState('');
+  const [angle, setAngle] = usePersistedState<string>('asset.angle', '');
 
   useEffect(() => {
     if (assetCategory !== 'food') return;
@@ -351,28 +352,28 @@ export default function AssetCreator() {
     if (!current?.compatibleWithShotType) setAngle('');
   }, [mode, assetCategory, angle]);
 
-  const [cameraBody, setCameraBody] = useState('');
-  const [lensType, setLensType] = useState('');
-  const [fStop, setFStop] = useState('');
-  const [shutterSpeed, setShutterSpeed] = useState('');
-  const [isoSetting, setIsoSetting] = useState('');
+  const [cameraBody, setCameraBody] = usePersistedState<string>('asset.cameraBody', '');
+  const [lensType, setLensType] = usePersistedState<string>('asset.lensType', '');
+  const [fStop, setFStop] = usePersistedState<string>('asset.fStop', '');
+  const [shutterSpeed, setShutterSpeed] = usePersistedState<string>('asset.shutterSpeed', '');
+  const [isoSetting, setIsoSetting] = usePersistedState<string>('asset.iso', '');
   const camera = [cameraBody, lensType, fStop, shutterSpeed, isoSetting].filter(Boolean).join(', ');
-  const [lighting, setLighting] = useState('');
-  const [selectedDetails, setSelectedDetails] = useState<string[]>([]);
-  const [composition, setComposition] = useState('');
+  const [lighting, setLighting] = usePersistedState<string>('asset.lighting', '');
+  const [selectedDetails, setSelectedDetails] = usePersistedState<string[]>('asset.selectedDetails', []);
+  const [composition, setComposition] = usePersistedState<string>('asset.composition', '');
 
   // Background
-  const [bgMode, setBgMode] = useState<'natural' | 'solid'>('natural');
-  const [bgColor, setBgColor] = useState('#00B140');
-  const [customBg, setCustomBg] = useState('');
-  const [ratio, setRatio] = useState<string>('1:1');
+  const [bgMode, setBgMode] = usePersistedState<'natural' | 'solid'>('asset.bgMode', 'natural');
+  const [bgColor, setBgColor] = usePersistedState<string>('asset.bgColor', '#00B140');
+  const [customBg, setCustomBg] = usePersistedState<string>('asset.customBg', '');
+  const [ratio, setRatio] = usePersistedState<string>('asset.ratio', '1:1');
 
   // Results
   const [generating, setGenerating] = useState(false);
-  const [count, setCount] = useState(1);
+  const [count, setCount] = usePersistedState<number>('asset.count', 1);
   const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
-  const [assets, setAssets] = useState<GeneratedAsset[]>([]);
+  const [assets, setAssets] = usePersistedState<GeneratedAsset[]>('asset.assets', []);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -637,26 +638,28 @@ export default function AssetCreator() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       {/* Asset Sub-Tabs */}
-      <div className="flex items-center gap-1 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-fit">
-        {([['product', 'Product / Food'], ['title', 'Title Generator']] as const).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setAssetSubTab(id)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              assetSubTab === id
-                ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.2)]'
-                : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="-mx-4 sm:mx-0 overflow-x-auto scrollbar-hide">
+        <div className="flex items-center gap-1 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-max mx-4 sm:mx-0 sm:w-fit">
+          {([['product', 'Product / Food'], ['title', 'Title Generator']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setAssetSubTab(id)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+                assetSubTab === id
+                  ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.2)]'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {assetSubTab === 'title' ? <TitleGenerator /> : (
       <>
       {/* Food / Product Toggle */}
-      <div className="flex items-center gap-1 bg-[#0A0A0F] border border-[#27273A] rounded-xl p-1 w-fit">
+      <div className="flex items-center gap-1 bg-[#0A0A0F] border border-[#27273A] rounded-xl p-1 w-fit max-w-full overflow-x-auto scrollbar-hide">
         {([['food', 'Food', '🍽️'], ['product', 'Products / Objects', '📦']] as const).map(([id, label, icon]) => (
           <button
             key={id}

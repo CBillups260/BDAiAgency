@@ -15,6 +15,7 @@ import {
 } from '@geist-ui/icons';
 import { addToFlowBucket, useFlowBucketDrop, flowItemToBase64, type FlowBucketItem } from './FlowBucket';
 import { useFirestoreAccounts, useFirestoreAccount, useFirestoreMediaAssets } from '../hooks/useFirestore';
+import { usePersistedState } from '../hooks/usePersistedState';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../lib/firebase';
 
@@ -89,23 +90,23 @@ const ELEMENT_COLORS: Record<string, string> = {
 
 export default function RemixCreator() {
   const { accounts, loading: accountsLoading } = useFirestoreAccounts();
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = usePersistedState<string | null>('remix.accountId', null);
   const { account: fullAccount } = useFirestoreAccount(selectedAccountId);
   const { assets: savedAssets, addAsset: addMediaAsset } = useFirestoreMediaAssets(selectedAccountId);
   const selectedAccount = accounts.find(a => a.id === selectedAccountId) || null;
 
   // Stages
-  const [stage, setStage] = useState<Stage>('upload');
-  const [inputGraphic, setInputGraphic] = useState<ImageData | null>(null);
-  const [analysis, setAnalysis] = useState<GraphicAnalysis | null>(null);
+  const [stage, setStage] = usePersistedState<Stage>('remix.stage', 'upload');
+  const [inputGraphic, setInputGraphic] = usePersistedState<ImageData | null>('remix.inputGraphic', null);
+  const [analysis, setAnalysis] = usePersistedState<GraphicAnalysis | null>('remix.analysis', null);
   const [replacements, setReplacements] = useState<Map<number, ReplacementAsset>>(new Map());
-  const [model, setModel] = useState('gemini-3-pro-image-preview');
-  const [resolution, setResolution] = useState('1K');
-  const [ratio, setRatio] = useState('1:1');
-  const [instructions, setInstructions] = useState('');
-  const [improveQuality, setImproveQuality] = useState(false);
+  const [model, setModel] = usePersistedState<string>('remix.model', 'gemini-3-pro-image-preview');
+  const [resolution, setResolution] = usePersistedState<string>('remix.resolution', '1K');
+  const [ratio, setRatio] = usePersistedState<string>('remix.ratio', '1:1');
+  const [instructions, setInstructions] = usePersistedState<string>('remix.instructions', '');
+  const [improveQuality, setImproveQuality] = usePersistedState<boolean>('remix.improveQuality', false);
   const [textOverrides, setTextOverrides] = useState<Map<number, string>>(new Map());
-  const [result, setResult] = useState<{ base64: string; mimeType: string } | null>(null);
+  const [result, setResult] = usePersistedState<{ base64: string; mimeType: string } | null>('remix.result', null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -132,8 +133,8 @@ export default function RemixCreator() {
   });
 
   // Crop
-  const [cropRect, setCropRect] = useState<CropRect | null>(null);
-  const [imgNaturalSize, setImgNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  const [cropRect, setCropRect] = usePersistedState<CropRect | null>('remix.cropRect', null);
+  const [imgNaturalSize, setImgNaturalSize] = usePersistedState<{ w: number; h: number } | null>('remix.imgNaturalSize', null);
   const cropContainerRef = useRef<HTMLDivElement>(null);
   const cropDragging = useRef<{ type: 'move' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w'; startX: number; startY: number; startRect: CropRect } | null>(null);
 
