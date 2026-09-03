@@ -9,9 +9,41 @@ import {
   hasAnyGhlTokenSource,
   readGhlLocationTokensMap,
 } from "../services/ghlClient.js";
+import { planBulkSchedule } from "../lib/schedulePlanner.js";
 
 const router = Router();
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+
+const EXT_MIME_TYPES: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  webp: "image/webp",
+  heic: "image/heic",
+  mp4: "video/mp4",
+  mov: "video/quicktime",
+  m4v: "video/x-m4v",
+  webm: "video/webm",
+};
+
+/**
+ * HighLevel REQUIRES a `type` on every media item ("media.0.type must be a string").
+ * Worse, when it's missing on an otherwise valid post their API doesn't return that
+ * validation error — it 400s with an internal "Cannot read properties of undefined
+ * (reading 'includes')". So always send one, derived from the URL's extension.
+ */
+function mediaMimeTypeForUrl(url: string): string {
+  const path = (url.split("?")[0] ?? url).trim();
+  let decoded = path;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    // Malformed escapes — fall back to the raw path.
+  }
+  const ext = decoded.split(".").pop()?.toLowerCase() ?? "";
+  return EXT_MIME_TYPES[ext] ?? "image/jpeg";
+}
 
 function privateTokenFromBody(body: { privateIntegrationToken?: unknown } | undefined): string | undefined {
   const t = body?.privateIntegrationToken;
@@ -469,6 +501,124 @@ Return ONLY valid JSON (no markdown code fences) in this exact shape:
   }
 });
 
+/** Target-tz offset (local − UTC, minutes) at a given instant, via Intl. 0 if tz is unknown. */
+function offsetMinutesForTz(tz: string, atMs: number): number {
+  try {
+    const dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    const map: Record<string, string> = {};
+    for (const p of dtf.formatToParts(new Date(atMs))) map[p.type] = p.value;
+    let hour = Number(map.hour);
+    if (hour === 24) hour = 0; // some environments format midnight as "24"
+    const asUtc = Date.UTC(
+      Number(map.year),
+      Number(map.month) - 1,
+      Number(map.day),
+      hour,
+      Number(map.minute),
+      Number(map.second)
+    );
+    return Math.round((asUtc - atMs) / 60000);
+  } catch {
+    return 0;
+  }
+}
+
+interface PlanBulkBody {
+  locationId?: string;
+  timezone?: string;
+  windowDays?: number;
+  usesPerImage?: number;
+  minSimilarGapDays?: number;
+  minGapHours?: number;
+  items?: { id?: string; similarityKey?: string }[];
+  privateIntegrationToken?: string;
+}
+
+/**
+ * Spread a batch of images across a window — each image posted `usesPerImage` times,
+ * copies of one image kept far apart, similar images (same similarityKey) spaced out.
+ * Pulls existing GHL posts (when a locationId is given) to avoid collisions; degrades
+ * gracefully to pure spreading when GHL isn't wired up.
+ */
+router.post("/plan-bulk-schedule", async (req, res) => {
+  try {
+    const {
+      locationId,
+      timezone = "America/New_York",
+      windowDays = 90,
+      usesPerImage = 2,
+      minSimilarGapDays,
+      minGapHours,
+      items = [],
+      privateIntegrationToken,
+    } = req.body as PlanBulkBody;
+
+    const cleanItems = items.map((it, i) => ({
+      id: typeof it?.id === "string" && it.id.trim() ? it.id.trim() : `item-${i}`,
+      similarityKey:
+        typeof it?.similarityKey === "string" && it.similarityKey.trim()
+          ? it.similarityKey.trim().toLowerCase()
+          : "misc",
+    }));
+    if (!cleanItems.length) {
+      return res.status(400).json({ error: "At least one item is required." });
+    }
+
+    // Optionally pull existing scheduled posts in the window so we don't double-book.
+    let existingSlotsIso: string[] = [];
+    const loc = locationId?.trim();
+    if (loc) {
+      try {
+        const ghl = getGhlClientForLocation(loc, privateIntegrationToken);
+        const end = new Date();
+        end.setDate(end.getDate() + Math.max(1, Math.min(120, windowDays)));
+        const listBody = {
+          skip: "0",
+          limit: "100",
+          fromDate: new Date().toISOString(),
+          toDate: end.toISOString(),
+          includeUsers: "true",
+        };
+        const listData = await ghl.socialMediaPosting.getPosts({ locationId: loc }, listBody);
+        existingSlotsIso = postsFromListResponse(listData)
+          .map((p) => extractSlotIso(p))
+          .filter((s): s is string => !!s);
+      } catch (err) {
+        // Non-fatal — fall back to spreading without collision avoidance.
+        console.warn("plan-bulk-schedule: could not load existing posts:", ghlerrMessage(err));
+      }
+    }
+
+    const nowMs = Date.now();
+    const tzOffsetMinutes = offsetMinutesForTz(timezone, nowMs);
+
+    const plan = planBulkSchedule(cleanItems, {
+      windowDays,
+      usesPerImage,
+      minSimilarGapDays,
+      minGapHours,
+      existingSlotsIso,
+      tzOffsetMinutes,
+      nowMs,
+    });
+
+    res.json({ plan, timezone, windowDays, usesPerImage, existingCount: existingSlotsIso.length });
+  } catch (err: unknown) {
+    console.error("GHL plan-bulk-schedule:", ghlerrMessage(err));
+    const status = err instanceof GHLError ? err.statusCode || 502 : (err as { status?: number })?.status || 500;
+    res.status(typeof status === "number" ? status : 500).json({ error: formatGhlUserFacingError(err) });
+  }
+});
+
 router.post("/schedule", async (req, res) => {
   try {
     const {
@@ -501,6 +651,18 @@ router.post("/schedule", async (req, res) => {
       return res.status(400).json({ error: "scheduleDate is required (ISO-8601)." });
     }
 
+    // Hard guard: this endpoint SCHEDULES. A missing/past/unparseable date must never
+    // reach HighLevel, because anything it treats as "now" publishes to live accounts.
+    const when = new Date(scheduleDate);
+    if (Number.isNaN(when.getTime())) {
+      return res.status(400).json({ error: `scheduleDate is not a valid date: "${scheduleDate}".` });
+    }
+    if (when.getTime() <= Date.now() + 60_000) {
+      return res.status(400).json({
+        error: "scheduleDate must be at least a minute in the future — refusing to publish immediately.",
+      });
+    }
+
     const userId = bodyUserId?.trim() || getDefaultGhlUserId();
     if (!userId) {
       return res.status(400).json({
@@ -512,14 +674,23 @@ router.post("/schedule", async (req, res) => {
     const ghl = getGhlClientForLocation(loc, privateTokenFromBody(req.body));
     const media =
       Array.isArray(mediaUrls) && mediaUrls.length > 0
-        ? mediaUrls.filter((u) => typeof u === "string" && u.trim()).map((url) => ({ url: url.trim() }))
+        ? mediaUrls
+            .filter((u) => typeof u === "string" && u.trim())
+            .map((url) => {
+              const u = url.trim();
+              return { url: u, type: mediaMimeTypeForUrl(u) };
+            })
         : undefined;
 
     const data = await ghl.socialMediaPosting.createPost({ locationId: loc }, {
       accountIds,
       summary: caption.trim(),
-      scheduleDate: new Date(scheduleDate).toISOString(),
+      scheduleDate: when.toISOString(),
       type: "post",
+      // WITHOUT this, HighLevel defaults to publishing the post IMMEDIATELY and
+      // ignores scheduleDate. Never omit it. Valid values: in_progress, draft,
+      // failed, published, scheduled, in_review, notification_sent, pending, deleted.
+      status: "scheduled",
       userId,
       media,
     });

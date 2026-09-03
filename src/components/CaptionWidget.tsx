@@ -102,8 +102,11 @@ export default function CaptionWidget({
       {/* ── Toggle Tab ──────────────────────────────── */}
       <div
         onClick={() => setOpen(!open)}
-        className="fixed top-1/2 -translate-y-1/2 z-40 cursor-pointer"
-        style={{ left: open ? 'calc(16rem + 320px)' : '16rem', transition: 'left 0.3s ease' }}
+        className={`fixed top-1/2 -translate-y-1/2 z-40 cursor-pointer transition-[left] duration-300 ${
+          open
+            ? 'left-[min(86vw,320px)] lg:left-[calc(16rem+320px)]'
+            : 'left-0 lg:left-64'
+        }`}
       >
         <div className="flex items-center gap-1 bg-purple-600 hover:bg-purple-500 text-white px-2 py-3 rounded-r-xl shadow-lg transition-colors"
           style={{ writingMode: open ? undefined : 'vertical-rl' }}
@@ -119,10 +122,8 @@ export default function CaptionWidget({
 
       {/* ── Sliding Panel ───────────────────────────── */}
       <div
-        className="fixed top-0 h-full z-30 bg-[#0D0D14] border-r border-[#27273A] shadow-2xl flex flex-col"
+        className="fixed top-0 h-dvh z-30 w-[86vw] max-w-[320px] left-0 lg:left-64 lg:w-80 lg:max-w-none bg-[#0D0D14] border-r border-[#27273A] shadow-2xl flex flex-col"
         style={{
-          left: '16rem',
-          width: 320,
           transform: open ? 'translateX(0)' : 'translateX(-100%)',
           transition: 'transform 0.3s ease',
         }}

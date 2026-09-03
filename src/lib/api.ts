@@ -20,6 +20,26 @@ const LONG_RUNNING_PATHS = [
   "/api/content/remix-graphic",
   "/api/content/extract-background",
   "/api/content/classify-references",
+  // Invisible (SynthID) removal proxies to a GPU diffusion service (10–40s).
+  "/api/content/remove-watermark",
+  // Reel/video download streams the full MP4 back through the function.
+  "/api/social/download",
+  // Server-side ffmpeg branding — downloads, re-encodes, and returns an MP4.
+  "/api/social/brand-video",
+  // Creative Writer — multi-model AI calls routinely exceed 26s.
+  "/api/creative/analyze",
+  "/api/creative/roundtable/run",
+  "/api/creative/craft",
+  "/api/creative/extract-bible",
+  "/api/creative/ingest-chapter",
+  "/api/creative/narrate",
+  "/api/creative/roundtable/finalize",
+  "/api/creative/transform",
+  "/api/creative/format-chapter",
+  "/api/creative/title-chapter",
+  "/api/creative/restructure",
+  "/api/creative/edit-selection",
+  "/api/creative/craft-plan",
 ];
 
 /**

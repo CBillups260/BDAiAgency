@@ -105,10 +105,25 @@ export function getDefaultGhlUserId(): string | undefined {
   return id || undefined;
 }
 
+/** HighLevel sends validation failures as an array of strings — keep every line. */
+function readApiMessage(source: { message?: unknown } | undefined): string {
+  const m = source?.message;
+  if (typeof m === "string") return m.trim();
+  if (Array.isArray(m)) {
+    return m
+      .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      .join(" · ")
+      .trim();
+  }
+  return "";
+}
+
 export function ghlerrMessage(err: unknown): string {
   if (err instanceof GHLError) {
-    const ax = err.response as { data?: { message?: string } } | undefined;
-    const apiMsg = ax?.data && typeof ax.data.message === "string" ? ax.data.message.trim() : "";
+    // The SDK puts the API body on `response` for some calls and `response.data`
+    // for others — check both, or the useful validation detail is silently lost.
+    const ax = err.response as { message?: unknown; data?: { message?: unknown } } | undefined;
+    const apiMsg = readApiMessage(ax?.data) || readApiMessage(ax);
     return apiMsg || err.message || "HighLevel API error";
   }
   if (err instanceof Error) return err.message;

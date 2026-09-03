@@ -9,6 +9,9 @@ import ghlRoutes from "./routes/ghl.js";
 import servicesRoutes from "./routes/services.js";
 import prospectingRoutes from "./routes/prospecting.js";
 import socialRoutes from "./routes/social.js";
+import inspirationRoutes from "./routes/inspiration.js";
+import artDirectionRoutes from "./routes/artDirection.js";
+import creativeRoutes from "./routes/creative.js";
 
 /**
  * Paths that are hit by an external OAuth provider's browser redirect and
@@ -49,6 +52,9 @@ export function createApp(): express.Express {
   app.use("/api/services", servicesRoutes);
   app.use("/api/prospecting", prospectingRoutes);
   app.use("/api/social", socialRoutes);
+  app.use("/api/inspiration", inspirationRoutes);
+  app.use("/api/art-direction", artDirectionRoutes);
+  app.use("/api/creative", creativeRoutes);
 
   app.use(
     (

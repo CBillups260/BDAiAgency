@@ -1795,7 +1795,7 @@ export default function Prospecting({ user }: ProspectingProps) {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="fixed top-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-blue-600 text-white text-sm font-medium shadow-lg shadow-blue-600/30 flex items-center gap-3"
+            className="fixed top-6 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-2rem)] px-5 py-3 rounded-2xl bg-blue-600 text-white text-sm font-medium shadow-lg shadow-blue-600/30 flex items-center gap-3"
           >
             <CheckCircle size={16} />
             {copiedToast}

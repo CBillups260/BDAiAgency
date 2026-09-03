@@ -14,8 +14,13 @@ import {
   Save,
   Bookmark,
   Package,
+  Star,
+  RotateCw,
 } from '@geist-ui/icons';
 import { addToFlowBucket, useFlowBucketDrop, flowItemToBase64, type FlowBucketItem } from './FlowBucket';
+import PushToSchedulerButton from './PushToSchedulerButton';
+import ModelPicker from './ModelPicker';
+import { modelName, getModel, PROVIDER_MAP } from '../lib/modelCatalog';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../lib/firebase';
 import { useFirestoreAccounts, useFirestoreMediaAssets, useFirestoreAccount, type FirestoreMenuItem } from '../hooks/useFirestore';
@@ -89,6 +94,9 @@ const FOOD_ANGLES = [
   { id: 'Straight-on front view, eye level', label: 'Eye Level', compatibleWithShotType: false },
   { id: '45-degree angle, slightly above, classic food photography', label: '45° Classic', compatibleWithShotType: false },
   { id: 'Three-quarter angle showing depth and dimension', label: '3/4 View', compatibleWithShotType: false },
+  { id: 'Three-quarter angle from the left side, showing the front and left face of the dish', label: '3/4 Left', compatibleWithShotType: false },
+  { id: 'Three-quarter angle from the right side, showing the front and right face of the dish', label: '3/4 Right', compatibleWithShotType: false },
+  { id: 'Slightly elevated 30-degree angle, just above eye level', label: '30° Elevated', compatibleWithShotType: false },
   { id: 'Top-down overhead flat lay view, directly above', label: 'Top Down', compatibleWithShotType: false },
   { id: 'Side profile view, straight on, showing layers and height', label: 'Side Profile', compatibleWithShotType: false },
   { id: 'Low angle, looking up at the dish, hero shot', label: 'Low Angle', compatibleWithShotType: false },
@@ -116,6 +124,11 @@ const PRODUCT_ANGLES = [
   { id: 'Straight-on front view, eye level, product centered', label: 'Front View' },
   { id: '45-degree angle, slightly above, revealing top and side', label: '45° Angle' },
   { id: 'Three-quarter angle showing depth and dimension of product', label: '3/4 View' },
+  { id: 'Three-quarter angle from the left, showing the front and left side of the product', label: '3/4 Left' },
+  { id: 'Three-quarter angle from the right, showing the front and right side of the product', label: '3/4 Right' },
+  { id: 'Three-quarter rear angle, showing the back and one side of the product', label: '3/4 Rear' },
+  { id: 'Slightly elevated 30-degree angle, just above product eye level', label: '30° Elevated' },
+  { id: 'Dutch angle, slightly tilted camera for dynamic energy', label: 'Dutch Tilt' },
   { id: 'Top-down overhead view, directly above product', label: 'Top Down' },
   { id: 'Side profile view, straight on', label: 'Side Profile' },
   { id: 'Low angle, looking up at product, making it look powerful', label: 'Low Angle' },
@@ -206,6 +219,15 @@ const F_STOPS = [
   { id: 'shot at f/16, maximum depth of field, everything tack sharp front to back', label: 'f/16' },
 ];
 
+const DOF_OPTIONS = [
+  { id: '', label: 'Default' },
+  { id: 'with an ultra-shallow depth of field, a razor-thin focus plane on the subject and the background fully dissolved into creamy bokeh', label: 'Ultra Shallow' },
+  { id: 'with a shallow depth of field, the subject crisply isolated against a softly blurred background', label: 'Shallow' },
+  { id: 'with a moderate depth of field, the subject sharp and the background gently softened but still readable', label: 'Moderate' },
+  { id: 'with a deep depth of field, the entire scene in sharp focus front to back', label: 'Deep Focus' },
+  { id: 'with a focus-stacked macro-style depth of field, every part of the subject tack sharp while the far background stays soft', label: 'Focus Stacked' },
+];
+
 const SHUTTER_SPEEDS = [
   { id: '', label: 'Default' },
   { id: 'frozen with a 1/1000s shutter speed, tack-sharp action', label: '1/1000s Freeze' },
@@ -232,6 +254,46 @@ const LIGHTING_OPTIONS = [
   { id: 'Dramatic side lighting, deep shadows', label: 'Dramatic' },
   { id: 'Soft diffused studio lighting', label: 'Studio Soft' },
   { id: 'Backlit with rim light', label: 'Backlit' },
+  { id: 'Directional sidelight — one strong light source raking in from the side at roughly 90 degrees, carving out texture and dimension with long directional shadows', label: 'Directional Sidelight' },
+  { id: 'Hard directional light with crisp, well-defined shadows and bright specular highlights', label: 'Hard Light' },
+  { id: 'Soft natural window light from one side, gentle falloff and natural shadow gradients', label: 'Window Light' },
+  { id: 'Low-key single spotlight on the subject, background falling into darkness', label: 'Low-Key Spot' },
+  { id: 'Split lighting — half the subject lit, half falling into shadow, dramatic and sculptural', label: 'Split Light' },
+  { id: 'Top-down softbox lighting, even and luminous with soft under-shadows', label: 'Softbox Top' },
+];
+
+// Advanced finishing looks (multi-select). These are appended to the prompt's
+// style adjustments alongside the Details chips.
+const LOOK_CHIPS = [
+  { id: 'Pronounced specular highlights — bright, crisp light reflections glinting off glossy and wet surfaces', label: 'Specular Highlights' },
+  { id: 'Strong texture contrast — heightened micro-contrast and clarity so rough, smooth, crisp, and soft textures play off each other', label: 'Texture Contrast' },
+  { id: 'Complementary color contrast — grade the scene so the subject and background sit on opposite sides of the color wheel (e.g. a warm subject against cool tones) for maximum pop. This color adjustment is intentional', label: 'Complementary Contrast' },
+  { id: 'Bold tonal contrast — deep shadows and bright highlights spanning a full tonal range', label: 'Tonal Contrast' },
+  { id: 'Warm-versus-cool light contrast — a warm key light against cooler ambient fill for cinematic depth', label: 'Warm / Cool Split' },
+  { id: 'Defined rim-light separation — a subtle edge highlight cleanly separating the subject from the background', label: 'Rim Definition' },
+];
+
+// Adobe Lightroom-style color-grade presets. Each id is a complete grading
+// instruction; the trailing clause lets the grade win over the
+// palette-preservation rules baked into the enhancement prompts.
+const lrPreset = (name: string, desc: string) =>
+  `Apply an Adobe Lightroom-style '${name}' preset as the final color grade: ${desc}. This grade is intentional — apply it even where earlier instructions say to preserve the original color palette`;
+
+const LIGHTROOM_PRESETS = [
+  { id: '', label: 'None', sub: 'No grade' },
+  { id: lrPreset('Bright & Airy', 'lifted exposure, soft clean whites, gentle pastel saturation, airy luminous highlights'), label: 'Bright & Airy', sub: 'Light + clean' },
+  { id: lrPreset('Moody Matte', 'faded matte blacks, desaturated tones, soft contrast, understated film mood'), label: 'Moody Matte', sub: 'Faded film' },
+  { id: lrPreset('Teal & Orange', 'cinematic teal shadows and warm orange highlights with punchy midtone contrast'), label: 'Teal & Orange', sub: 'Cinematic' },
+  { id: lrPreset('Portra Film', 'Kodak Portra-inspired warm natural tones, creamy highlight rolloff, fine film grain'), label: 'Portra Film', sub: 'Warm analog' },
+  { id: lrPreset('Faded Film', 'vintage faded-film wash, muted colors, lifted shadows, nostalgic softness'), label: 'Faded Film', sub: 'Vintage' },
+  { id: lrPreset('HDR Punch', 'high clarity and texture, vivid punchy color, bold tonal detail from shadows to highlights'), label: 'HDR Punch', sub: 'Max detail' },
+  { id: lrPreset('Golden Glow', 'warm golden-hour wash, amber highlights, soft glowing warmth'), label: 'Golden Glow', sub: 'Sunset warm' },
+  { id: lrPreset('Clean Commercial', 'neutral true-to-life color, crisp whites, balanced contrast, polished commercial finish'), label: 'Clean Commercial', sub: 'True color' },
+  { id: lrPreset('Dark & Moody', 'deep crushed shadows, rich earthy tones, low-key dramatic mood'), label: 'Dark & Moody', sub: 'Low-key' },
+  { id: lrPreset('Pastel Cream', 'creamy highlights, gentle pastel palette, soft dreamy tonality'), label: 'Pastel Cream', sub: 'Soft + dreamy' },
+  { id: lrPreset('Urban Desat', 'desaturated gritty tones, cool tint, punchy micro-contrast, urban editorial feel'), label: 'Urban Desat', sub: 'Gritty cool' },
+  { id: lrPreset('Vivid Pop', 'high-saturation vivid color, bright punchy contrast, energetic feel'), label: 'Vivid Pop', sub: 'Max color' },
+  { id: lrPreset('B&W Contrast', 'high-contrast black-and-white conversion, deep blacks, bright highlights, rich tonal range'), label: 'B&W Contrast', sub: 'Monochrome' },
 ];
 
 const FOOD_DETAILS = [
@@ -271,17 +333,29 @@ const COMPOSITION_OPTIONS = [
   { id: 'Negative space on one side', label: 'Negative Space' },
 ];
 
-const MODELS = [
-  { id: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro', sub: 'Higher quality, slower' },
-  { id: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash', sub: 'Faster, thinking mode' },
-  { id: 'gpt-image-2', label: 'OpenAI Image 2', sub: 'OpenAI, photo-realistic' },
-];
+// Image models now live in the shared catalog (src/lib/modelCatalog.ts) and are
+// browsed via <ModelPicker />.
 
 const RESOLUTIONS = [
   { id: '512', label: '512px', sub: 'Fast preview' },
   { id: '1K', label: '1K', sub: 'Standard' },
   { id: '2K', label: '2K', sub: 'High res' },
   { id: '4K', label: '4K', sub: 'Ultra' },
+];
+
+const DETAIL_PRESETS = [
+  { id: '', label: 'Standard', sub: 'No boost' },
+  { id: 'fine', label: 'Fine Detail', sub: 'Crisp + clean' },
+  { id: 'ultra', label: 'Ultra Sharp', sub: 'Tack-sharp' },
+  { id: 'hyper', label: 'Hyper Real', sub: 'Max detail' },
+];
+
+const DETAIL_CHIPS = [
+  { id: 'tack-sharp',    label: 'Tack-Sharp Focus' },
+  { id: 'micro-contrast', label: 'Micro-Contrast' },
+  { id: 'texture',       label: 'Texture Boost' },
+  { id: 'noise-free',    label: 'Noise-Free' },
+  { id: 'edge-clarity',  label: 'Edge Clarity' },
 ];
 
 const THINKING_LEVELS = [
@@ -310,11 +384,26 @@ const RATIOS = [
   { id: '16:9' as const, label: '16:9', sub: 'Wide' },
 ];
 
+// Rotation presets (degrees clockwise). 0 = off. A custom degree value can be
+// typed alongside these. The chosen rotation is sent to the prompt builder,
+// which instructs the AI to rotate the image and fill any exposed corners.
+const ROTATION_PRESETS = [
+  { deg: 0, label: 'None' },
+  { deg: 15, label: '15°' },
+  { deg: 30, label: '30°' },
+  { deg: 45, label: '45°' },
+  { deg: 90, label: '90°' },
+  { deg: 180, label: '180°' },
+  { deg: 270, label: '270°' },
+];
+
 interface GeneratedAsset {
   base64: string;
   mimeType: string;
   prompt: string;
   timestamp: number;
+  /** True once the visible watermark / AI metadata has been stripped in place. */
+  cleaned?: boolean;
 }
 
 // ─── Component ───────────────────────────────────────────
@@ -335,7 +424,18 @@ export default function AssetCreator() {
   // Core
   const [dishName, setDishName] = usePersistedState<string>('asset.dishName', '');
   const [model, setModel] = usePersistedState<string>('asset.model', 'gemini-3-pro-image-preview');
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [recentModels, setRecentModels] = usePersistedState<string[]>('asset.recentModels.v1', []);
+  const selectModel = useCallback(
+    (id: string) => {
+      setModel(id);
+      setRecentModels((prev) => [id, ...prev.filter((x) => x !== id)].slice(0, 6));
+    },
+    [setModel, setRecentModels],
+  );
   const [resolution, setResolution] = usePersistedState<string>('asset.resolution', '1K');
+  const [detailPreset, setDetailPreset] = usePersistedState<string>('asset.detailPreset', '');
+  const [detailChips, setDetailChips] = usePersistedState<string[]>('asset.detailChips', []);
   const [thinkingLevel, setThinkingLevel] = usePersistedState<string>('asset.thinkingLevel', '');
   const [mode, setMode] = usePersistedState<string>('asset.mode', 'full');
   const [variationNotes, setVariationNotes] = usePersistedState<string>('asset.variationNotes', '');
@@ -357,9 +457,12 @@ export default function AssetCreator() {
   const [fStop, setFStop] = usePersistedState<string>('asset.fStop', '');
   const [shutterSpeed, setShutterSpeed] = usePersistedState<string>('asset.shutterSpeed', '');
   const [isoSetting, setIsoSetting] = usePersistedState<string>('asset.iso', '');
-  const camera = [cameraBody, lensType, fStop, shutterSpeed, isoSetting].filter(Boolean).join(', ');
+  const [dof, setDof] = usePersistedState<string>('asset.dof', '');
+  const camera = [cameraBody, lensType, fStop, dof, shutterSpeed, isoSetting].filter(Boolean).join(', ');
   const [lighting, setLighting] = usePersistedState<string>('asset.lighting', '');
   const [selectedDetails, setSelectedDetails] = usePersistedState<string[]>('asset.selectedDetails', []);
+  const [lookChips, setLookChips] = usePersistedState<string[]>('asset.lookChips', []);
+  const [lightroomPreset, setLightroomPreset] = usePersistedState<string>('asset.lightroomPreset', '');
   const [composition, setComposition] = usePersistedState<string>('asset.composition', '');
 
   // Background
@@ -367,6 +470,10 @@ export default function AssetCreator() {
   const [bgColor, setBgColor] = usePersistedState<string>('asset.bgColor', '#00B140');
   const [customBg, setCustomBg] = usePersistedState<string>('asset.customBg', '');
   const [ratio, setRatio] = usePersistedState<string>('asset.ratio', '1:1');
+  const [rotation, setRotation] = usePersistedState<number>('asset.rotation', 0);
+  // 'subject' = turn only the subject in place (frame/background stay level);
+  // 'canvas' = roll the whole image (Dutch tilt). Defaults to subject.
+  const [rotationMode, setRotationMode] = usePersistedState<'subject' | 'canvas'>('asset.rotationMode', 'subject');
 
   // Results
   const [generating, setGenerating] = useState(false);
@@ -375,6 +482,8 @@ export default function AssetCreator() {
   const [error, setError] = useState<string | null>(null);
   const [assets, setAssets] = usePersistedState<GeneratedAsset[]>('asset.assets', []);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  // Assets currently being cleaned by the watermark remover, keyed by timestamp.
+  const [cleaningAssets, setCleaningAssets] = useState<Record<number, boolean>>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeBg = customBg || bgColor;
@@ -449,6 +558,14 @@ export default function AssetCreator() {
     setSelectedDetails(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
   };
 
+  const toggleDetailChip = (id: string) => {
+    setDetailChips(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const toggleLookChip = (id: string) => {
+    setLookChips(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
   const handleRefUpload = useCallback((files: FileList | null) => {
     if (!files?.length) return;
     const file = files[0];
@@ -481,10 +598,14 @@ export default function AssetCreator() {
       angle,
       camera,
       lighting,
-      details: selectedDetails.join('. '),
+      details: [...selectedDetails, ...lookChips, lightroomPreset].filter(Boolean).join('. '),
       composition,
       aspectRatio: ratio,
+      rotation,
+      rotationMode,
       referenceImage: refImage ? { base64: refImage.base64, mimeType: refImage.mimeType } : undefined,
+      detailPreset,
+      detailChips,
     };
 
     type ReqResult = { ok: true; images: any[] } | { ok: false; error: string };
@@ -554,6 +675,47 @@ export default function AssetCreator() {
     setAssets(prev => prev.filter((_, i) => i !== idx));
     if (selectedIdx === idx) setSelectedIdx(null);
     else if (selectedIdx !== null && selectedIdx > idx) setSelectedIdx(selectedIdx - 1);
+  };
+
+  /**
+   * One-click watermark removal on a generated asset — the same cleaner used in
+   * the Composer and the Watermark Remover tab. Strips the visible Gemini /
+   * Nano-Banana sparkle and the "Made with AI" C2PA/EXIF/XMP metadata, then
+   * replaces the asset in place. CPU-only on the server; recovers the real
+   * pixels rather than regenerating the image.
+   */
+  const cleanAsset = async (asset: GeneratedAsset) => {
+    if (cleaningAssets[asset.timestamp]) return;
+    setCleaningAssets(prev => ({ ...prev, [asset.timestamp]: true }));
+    setError(null);
+    try {
+      const res = await authedFetch('/api/content/remove-watermark', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: { base64: asset.base64, mimeType: asset.mimeType },
+          removeSparkle: true,
+          stripMetadata: true,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Watermark removal failed');
+      const cleaned = data.images?.[0];
+      if (!cleaned) throw new Error('No image returned');
+      setAssets(prev => prev.map(a =>
+        a.timestamp === asset.timestamp
+          ? { ...a, base64: cleaned.base64, mimeType: cleaned.mimeType || 'image/png', cleaned: true }
+          : a,
+      ));
+    } catch (e: any) {
+      setError(e.message || 'Watermark removal failed');
+    } finally {
+      setCleaningAssets(prev => {
+        const next = { ...prev };
+        delete next[asset.timestamp];
+        return next;
+      });
+    }
   };
 
   const saveToLibrary = async (idx: number) => {
@@ -769,6 +931,27 @@ export default function AssetCreator() {
                       {sendingToCanva === selectedIdx ? 'Sending...' : 'Canva'}
                     </button>
                   )}
+                  <PushToSchedulerButton
+                    account={selectedAccount}
+                    getImageBytes={() =>
+                      selected
+                        ? { base64: selected.base64, mimeType: selected.mimeType }
+                        : Promise.reject(new Error('No image selected.'))
+                    }
+                    source={{ id: 'asset_creator', topicHint: selected?.prompt || dishName || undefined }}
+                    label="Push to AI Scheduler"
+                  />
+                  <button
+                    onClick={() => cleanAsset(selected)}
+                    disabled={cleaningAssets[selected.timestamp]}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10 transition-all disabled:opacity-40"
+                    title="Remove watermark — strips the Gemini sparkle + 'Made with AI' metadata in place"
+                  >
+                    {cleaningAssets[selected.timestamp]
+                      ? <Loader size={12} className="animate-spin" />
+                      : selected.cleaned ? <Check size={12} /> : <Star size={12} />}
+                    {cleaningAssets[selected.timestamp] ? 'Cleaning…' : selected.cleaned ? 'Cleaned' : 'Remove Watermark'}
+                  </button>
                   <button
                     onClick={() => downloadAsset(selected)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-gradient-to-r from-purple-600 to-purple-500 text-white hover:from-purple-500 hover:to-purple-400 transition-all"
@@ -866,7 +1049,7 @@ export default function AssetCreator() {
                     {generating ? (
                       <div className="flex flex-col items-center gap-3 py-16">
                         <Loader size={32} className="text-purple-400 animate-spin" />
-                        <p className="text-sm text-zinc-400">Generating with {MODELS.find(m => m.id === model)?.label ?? 'AI'}...</p>
+                        <p className="text-sm text-zinc-400">Generating with {modelName(model)}...</p>
                         <p className="text-[10px] text-zinc-600">This may take 15-30 seconds</p>
                       </div>
                     ) : selected ? (
@@ -907,7 +1090,25 @@ export default function AssetCreator() {
                     <div className="aspect-square" style={{ backgroundColor: '#f5f5f5' }}>
                       <img src={`data:${asset.mimeType};base64,${asset.base64}`} alt="" className="w-full h-full object-contain" />
                     </div>
-                    <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {asset.cleaned && (
+                      <span
+                        className="absolute top-1 left-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-black/60 text-emerald-300 text-[8px] font-medium"
+                        title="Watermark sparkle + 'Made with AI' metadata removed"
+                      >
+                        <Check size={8} /> Cleaned
+                      </span>
+                    )}
+                    <div
+                      className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <PushToSchedulerButton
+                        account={selectedAccount}
+                        getImageBytes={() => ({ base64: asset.base64, mimeType: asset.mimeType })}
+                        source={{ id: 'asset_creator', topicHint: asset.prompt || dishName || undefined }}
+                        compact
+                        label="Push to AI Scheduler"
+                      />
                       {selectedAccountId && (
                         <button
                           onClick={(e) => { e.stopPropagation(); saveToLibrary(idx); }}
@@ -917,6 +1118,14 @@ export default function AssetCreator() {
                           {saving === idx ? <Loader size={10} className="animate-spin" /> : <Bookmark size={10} />}
                         </button>
                       )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); cleanAsset(asset); }}
+                        disabled={cleaningAssets[asset.timestamp]}
+                        className="p-1 rounded bg-emerald-600/90 text-white disabled:opacity-60"
+                        title="Remove watermark (sparkle + AI metadata)"
+                      >
+                        {cleaningAssets[asset.timestamp] ? <Loader size={10} className="animate-spin" /> : <Star size={10} />}
+                      </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); removeAsset(idx); }}
                         className="p-1 rounded bg-black/70 text-white"
@@ -938,7 +1147,7 @@ export default function AssetCreator() {
         </div>
 
         {/* ── Right: Controls ─────────────────────────── */}
-        <div className="space-y-4 overflow-y-auto max-h-[calc(100vh-200px)] pr-1">
+        <div className="space-y-4 overflow-y-auto max-h-[calc(100dvh-200px)] pr-1">
           {/* Reference Image Upload */}
           <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
             <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Reference Photo</h3>
@@ -1049,20 +1258,37 @@ export default function AssetCreator() {
           {/* Model */}
           <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
             <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">AI Model</h3>
-            <div className="grid grid-cols-2 gap-1.5">
-              {MODELS.map((m) => (
+            {(() => {
+              const cur = getModel(model);
+              const prov = cur ? PROVIDER_MAP[cur.provider] : undefined;
+              return (
                 <button
-                  key={m.id}
-                  onClick={() => setModel(m.id)}
-                  className={`px-3 py-3 rounded-xl border text-center transition-all ${
-                    model === m.id ? 'bg-purple-500/10 border-purple-500/30' : 'border-[#27273A] bg-[#0A0A0F] hover:border-zinc-600'
-                  }`}
+                  onClick={() => setModelPickerOpen(true)}
+                  className="w-full flex items-center gap-3 px-3 py-3 rounded-xl border border-[#27273A] bg-[#0A0A0F] hover:border-zinc-600 transition-all text-left"
                 >
-                  <p className={`text-[12px] font-semibold ${model === m.id ? 'text-purple-300' : 'text-zinc-300'}`}>{m.label}</p>
-                  <p className="text-[9px] text-zinc-500 mt-0.5">{m.sub}</p>
+                  {prov && (
+                    <div
+                      className="flex items-center justify-center rounded-full shrink-0 font-semibold"
+                      style={{ width: 28, height: 28, background: `${prov.color}22`, color: prov.color, fontSize: 14 }}
+                    >
+                      {prov.icon}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-semibold text-zinc-200 truncate">{modelName(model)}</p>
+                    <p className="text-[10px] text-zinc-500 truncate">
+                      {prov ? prov.name : 'Custom'}
+                      {cur?.refs !== 'none' && cur ? ' · references' : ''}
+                      {cur ? ` · up to ${cur.maxRes}` : ''}
+                    </p>
+                  </div>
+                  <span className="text-[11px] text-purple-300/80 shrink-0">Change</span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="text-zinc-500 shrink-0">
+                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
                 </button>
-              ))}
-            </div>
+              );
+            })()}
           </div>
 
           {/* Resolution */}
@@ -1082,6 +1308,42 @@ export default function AssetCreator() {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Detail Boost — always visible; applies to both generation and enhancement prompts */}
+          <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
+            <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Detail Boost</h3>
+            <div className="grid grid-cols-4 gap-1.5 mb-3">
+              {DETAIL_PRESETS.map((p) => (
+                <button
+                  key={p.id || 'standard'}
+                  onClick={() => setDetailPreset(p.id)}
+                  className={`py-2 rounded-xl border text-center transition-all ${
+                    detailPreset === p.id ? 'bg-purple-500/10 border-purple-500/30' : 'border-[#27273A] bg-[#0A0A0F] hover:border-zinc-600'
+                  }`}
+                >
+                  <p className={`text-[12px] font-semibold ${detailPreset === p.id ? 'text-purple-300' : 'text-zinc-300'}`}>{p.label}</p>
+                  <p className="text-[9px] text-zinc-500">{p.sub}</p>
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {DETAIL_CHIPS.map((c) => {
+                const active = detailChips.includes(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => toggleDetailChip(c.id)}
+                    className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-medium transition-all ${
+                      active ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[9px] text-zinc-600 mt-2">Adds sharpness / detail cues to the prompt. Works for both new generations and reference-image enhancements. Stack chips with care — too many can over-bake the result.</p>
           </div>
 
           {/* Thinking Mode (Flash only) */}
@@ -1201,9 +1463,9 @@ export default function AssetCreator() {
           <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5 space-y-5">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">Camera & Lens</h3>
-              {(cameraBody || lensType || fStop || shutterSpeed || isoSetting) && (
+              {(cameraBody || lensType || fStop || dof || shutterSpeed || isoSetting) && (
                 <button
-                  onClick={() => { setCameraBody(''); setLensType(''); setFStop(''); setShutterSpeed(''); setIsoSetting(''); }}
+                  onClick={() => { setCameraBody(''); setLensType(''); setFStop(''); setDof(''); setShutterSpeed(''); setIsoSetting(''); }}
                   className="text-[10px] text-zinc-500 hover:text-zinc-300 uppercase tracking-wider"
                 >
                   Reset
@@ -1265,6 +1527,25 @@ export default function AssetCreator() {
               </div>
             </div>
 
+            {/* Depth of Field */}
+            <div>
+              <h4 className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">Depth of Field</h4>
+              <div className="flex flex-wrap gap-1.5">
+                {DOF_OPTIONS.map((d) => (
+                  <button
+                    key={d.id}
+                    onClick={() => setDof(d.id)}
+                    className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
+                      dof === d.id ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[9px] text-zinc-600 mt-1.5">Focus falloff independent of F-Stop — if both are set, the F-Stop wording wins on optics, this on the look.</p>
+            </div>
+
             {/* Shutter Speed */}
             <div>
               <h4 className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-2">Shutter Speed</h4>
@@ -1318,6 +1599,58 @@ export default function AssetCreator() {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Advanced Look (multi-select) */}
+          <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
+            <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Advanced Look <span className="text-zinc-600 normal-case">(multi-select)</span></h3>
+            <div className="flex flex-wrap gap-1.5">
+              {LOOK_CHIPS.map((c) => {
+                const active = lookChips.includes(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => toggleLookChip(c.id)}
+                    className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
+                      active ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[9px] text-zinc-600 mt-2">Pro finishing touches — specular highlights, texture contrast, and color-theory contrast. Stack with care.</p>
+          </div>
+
+          {/* Lightroom Preset */}
+          <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">Lightroom Preset</h3>
+              {lightroomPreset && (
+                <button
+                  onClick={() => setLightroomPreset('')}
+                  className="text-[10px] text-zinc-500 hover:text-zinc-300 uppercase tracking-wider"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {LIGHTROOM_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  onClick={() => setLightroomPreset(p.id)}
+                  className={`px-2 py-2.5 rounded-xl border text-center transition-all ${
+                    lightroomPreset === p.id ? 'bg-purple-500/10 border-purple-500/30' : 'border-[#27273A] bg-[#0A0A0F] hover:border-zinc-600'
+                  }`}
+                >
+                  <p className={`text-[11px] font-semibold ${lightroomPreset === p.id ? 'text-purple-300' : 'text-zinc-300'}`}>{p.label}</p>
+                  <p className="text-[8px] text-zinc-500 mt-0.5 leading-tight">{p.sub}</p>
+                </button>
+              ))}
+            </div>
+            <p className="text-[9px] text-zinc-600 mt-2">Applies a Lightroom-style color grade as the final finishing pass — works on both new generations and photo enhancements.</p>
           </div>
 
           {/* Details (multi-select) */}
@@ -1375,6 +1708,70 @@ export default function AssetCreator() {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Rotation */}
+          <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                <RotateCw size={13} /> Rotation
+              </h3>
+              {rotation !== 0 && (
+                <button
+                  onClick={() => setRotation(0)}
+                  className="text-[10px] text-zinc-500 hover:text-zinc-300 uppercase tracking-wider"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+
+            {/* What rotates: the subject in place, or the whole canvas (tilt) */}
+            <div className="flex items-center gap-1 bg-[#0A0A0F] rounded-lg p-0.5 mb-3">
+              {([['subject', 'Subject', 'Turn the item, frame stays level'], ['canvas', 'Canvas', 'Tilt the whole image']] as const).map(([id, label, sub]) => (
+                <button
+                  key={id}
+                  onClick={() => setRotationMode(id)}
+                  title={sub}
+                  className={`flex-1 px-3 py-2 rounded-md text-[11px] font-medium transition-all text-center ${
+                    rotationMode === id ? 'bg-purple-500/15 text-purple-300' : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {ROTATION_PRESETS.map((r) => (
+                <button
+                  key={r.deg}
+                  onClick={() => setRotation(r.deg)}
+                  className={`px-3 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
+                    rotation === r.deg ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'border-[#27273A] bg-[#0A0A0F] text-zinc-400 hover:border-zinc-600'
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={360}
+                value={rotation}
+                onChange={(e) => setRotation(Math.max(0, Math.min(360, Math.round(Number(e.target.value) || 0))))}
+                className="w-20 bg-[#0A0A0F] border border-[#27273A] rounded-lg px-3 py-1.5 text-xs text-white font-mono outline-none focus:border-purple-500/40"
+              />
+              <span className="text-[11px] text-zinc-500">degrees clockwise</span>
+            </div>
+            <p className="text-[9px] text-zinc-600 mt-2">
+              {rotationMode === 'subject'
+                ? <><span className="text-zinc-400">Subject:</span> turns only the food/product (and its plate or vessel) to a new angle — the camera, background, table, and horizon stay fixed and level.</>
+                : <><span className="text-zinc-400">Canvas:</span> rolls the entire image like a tilted camera; the AI re-fills the corners the tilt exposes so the frame stays full.</>}
+              {' '}Set to <span className="text-zinc-400">None / 0</span> to disable.
+            </p>
           </div>
 
           {/* Canva Connection */}
@@ -1452,6 +1849,14 @@ export default function AssetCreator() {
           </div>
         </div>
       </div>
+
+      <ModelPicker
+        isOpen={modelPickerOpen}
+        onClose={() => setModelPickerOpen(false)}
+        selectedId={model}
+        onSelect={selectModel}
+        recentIds={recentModels}
+      />
       </>
       )}
     </div>

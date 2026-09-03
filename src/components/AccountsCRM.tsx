@@ -16,16 +16,22 @@ import {
   FileText,
   Upload,
   Loader,
+  Image as ImageIcon,
+  Tag as TagIcon,
 } from '@geist-ui/icons';
 import { motion, AnimatePresence } from 'motion/react';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { storage } from '../lib/firebase';
 import {
   useFirestoreAccounts,
   useFirestoreAccount,
   useFirestoreAccountMutations,
+  useFirestoreMediaAssets,
   ACCOUNT_TYPES,
   type FirestoreAccount as Account,
   type FirestoreContact as Contact,
   type FirestoreMenuItem as MenuItem,
+  type FirestoreMediaAsset as MediaAsset,
   type FirestoreAccountWithContacts as AccountWithContacts,
 } from '../hooks/useFirestore';
 import { getGhlLocationId, getGhlPrivateIntegrationToken } from '../lib/utils';
@@ -262,6 +268,8 @@ function BusinessSearchModal({ onSelect, onClose }: {
         industry: details.type || biz.type,
         description: details.description || biz.description || '',
         website: details.website || biz.website || '',
+        phone: details.phone || '',
+        address: details.address || '',
         avatar: details.thumbnail || biz.thumbnail || '',
         logo: details.thumbnail || biz.thumbnail || '',
         notes: [
@@ -340,7 +348,7 @@ function BusinessSearchModal({ onSelect, onClose }: {
 
 // ─── Logo compression (keep under Firestore 1MB limit) ───
 
-function compressImage(file: File, maxWidth = 400, quality = 0.85): Promise<string> {
+function compressImage(file: File, maxWidth = 400, quality = 0.85, mime: 'image/png' | 'image/jpeg' = 'image/png'): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -349,8 +357,13 @@ function compressImage(file: File, maxWidth = 400, quality = 0.85): Promise<stri
       canvas.width = img.width * scale;
       canvas.height = img.height * scale;
       const ctx = canvas.getContext('2d')!;
+      if (mime === 'image/jpeg') {
+        // JPEG has no alpha — paint a white backdrop so transparent PNGs don't go black.
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL('image/png', quality));
+      resolve(canvas.toDataURL(mime, quality));
       URL.revokeObjectURL(img.src);
     };
     img.src = URL.createObjectURL(file);
@@ -724,6 +737,12 @@ function AccountDetail({
                   <ExternalLink size={10} /> Website
                 </a>
               )}
+              {account.phone && (
+                <span className="text-xs text-zinc-500 flex items-center gap-1"><Phone size={10} /> {account.phone}</span>
+              )}
+              {account.address && (
+                <span className="text-xs text-zinc-500 truncate max-w-[220px]">{account.address}</span>
+              )}
             </div>
           </div>
         </div>
@@ -809,14 +828,15 @@ function AccountDetail({
             </div>
           )}
           {/* Logos */}
-          {(account.primaryLogo || account.lightLogo || account.darkLogo) && (
+          {(account.primaryLogo || account.lightLogo || account.darkLogo || account.simplisticLogo) && (
             <div className="mb-3">
               <p className="text-[10px] text-zinc-500 mb-1.5">Logos</p>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 {[
                   { src: account.primaryLogo, label: 'Primary', bg: 'bg-[#1a1a2e]' },
                   { src: account.lightLogo, label: 'Light', bg: 'bg-[#1a1a2e]' },
                   { src: account.darkLogo, label: 'Dark', bg: 'bg-white' },
+                  { src: account.simplisticLogo, label: 'Simplistic', bg: 'bg-[#1a1a2e]' },
                 ].filter(l => l.src).map((l, i) => (
                   <div key={i} className="text-center">
                     <div className={`w-16 h-12 rounded-lg border border-[#27273A] ${l.bg} flex items-center justify-center p-1.5`}>
@@ -830,9 +850,18 @@ function AccountDetail({
           )}
           {/* Brand Font */}
           {account.brandFont && (
-            <div>
+            <div className={account.brandFontImage ? 'mb-3' : ''}>
               <p className="text-[10px] text-zinc-500 mb-1">Brand Font</p>
               <p className="text-sm text-zinc-300" style={{ fontFamily: `'${account.brandFont}', serif` }}>{account.brandFont}</p>
+            </div>
+          )}
+          {/* Font style image (AI reference) */}
+          {account.brandFontImage && (
+            <div>
+              <p className="text-[10px] text-zinc-500 mb-1.5">Font Style Image (AI reference)</p>
+              <div className="inline-flex rounded-lg border border-[#27273A] bg-white p-1.5">
+                <img src={account.brandFontImage} alt="Font style reference" className="max-h-20 max-w-[12rem] object-contain" />
+              </div>
             </div>
           )}
         </div>
@@ -926,6 +955,12 @@ function AccountDetail({
         onDelete={onDeleteMenuItem}
       />
 
+      {/* Assets — per-account memory bucket */}
+      <AccountAssetsSection
+        accountId={account.id}
+        menuItems={account.menuItems || []}
+      />
+
       {/* Notes */}
       <div className="bg-[#0A0A0F] border border-[#27273A] rounded-2xl p-5 mt-4">
         <h4 className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
@@ -940,6 +975,325 @@ function AccountDetail({
           className="w-full bg-[#12121A] border border-[#27273A] rounded-xl p-3 text-sm text-white placeholder-zinc-600 outline-none resize-none focus:border-purple-500/40 transition-colors"
         />
       </div>
+    </div>
+  );
+}
+
+// ─── Account Assets ──────────────────────────────────────
+
+function AccountAssetsSection({
+  accountId,
+  menuItems,
+}: {
+  accountId: string;
+  menuItems: MenuItem[];
+}) {
+  const { assets, loading, addAsset, updateAsset, removeAsset } = useFirestoreMediaAssets(accountId);
+  const [dragActive, setDragActive] = useState(false);
+  const [uploadingCount, setUploadingCount] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<MediaAsset | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFiles = useCallback(async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
+    if (files.length === 0) return;
+    setUploadingCount((c) => c + files.length);
+    setError(null);
+
+    for (const file of files) {
+      try {
+        const dataUrl = await compressImage(file, 1200, 0.85);
+        const base64Data = dataUrl.split(',')[1];
+        const bytes = Uint8Array.from(atob(base64Data), (c) => c.charCodeAt(0));
+        const cleanBase = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '_').toLowerCase();
+        const fileName = `${Date.now()}-${cleanBase || 'asset'}.png`;
+        const sref = storageRef(storage, `assets/${accountId}/${fileName}`);
+        await uploadBytes(sref, bytes, { contentType: 'image/png' });
+        const imageUrl = await getDownloadURL(sref);
+        await addAsset({
+          accountId,
+          name: file.name.replace(/\.[^.]+$/, '') || 'Untitled Asset',
+          category: 'Uncategorized',
+          tags: [],
+          description: null,
+          menuMatch: null,
+          imageUrl,
+          mimeType: 'image/png',
+        });
+      } catch (e: any) {
+        setError(`Upload failed: ${e?.message || 'unknown error'}`);
+      } finally {
+        setUploadingCount((c) => Math.max(0, c - 1));
+      }
+    }
+  }, [accountId, addAsset]);
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+    if (e.dataTransfer.files.length > 0) void handleFiles(e.dataTransfer.files);
+  };
+
+  return (
+    <div
+      className={`border rounded-2xl p-5 mt-4 transition-colors ${
+        dragActive ? 'border-purple-500/60 bg-purple-500/5' : 'border-[#27273A] bg-[#0A0A0F]'
+      }`}
+      onDragEnter={(e) => { e.preventDefault(); setDragActive(true); }}
+      onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+      onDragLeave={(e) => { e.preventDefault(); setDragActive(false); }}
+      onDrop={onDrop}
+    >
+      <div className="flex items-center justify-between mb-4">
+        <h4 className="text-xs font-medium text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+          <ImageIcon size={12} className="text-purple-400" /> Assets
+          <span className="text-[10px] text-zinc-600 ml-1">({assets.length})</span>
+        </h4>
+        <div className="flex items-center gap-2">
+          {uploadingCount > 0 && (
+            <span className="text-[11px] text-zinc-500 flex items-center gap-1">
+              <Loader size={11} className="animate-spin text-purple-400" /> Uploading {uploadingCount}…
+            </span>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files) void handleFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-purple-600/20 text-purple-400 text-[11px] font-medium hover:bg-purple-600/30 transition-colors border border-purple-500/20"
+          >
+            <Upload size={11} /> Upload
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="mb-3 p-2 rounded-lg bg-red-500/10 border border-red-500/20 text-[11px] text-red-300">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-center py-8 text-zinc-600 text-sm">Loading…</div>
+      ) : assets.length === 0 ? (
+        <div className="text-center py-8">
+          <p className="text-sm text-zinc-600 mb-1">No assets yet</p>
+          <p className="text-xs text-zinc-700">Drop images here or click Upload — they fuel AI workflows for this account</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          {assets.map((asset) => (
+            <button
+              key={asset.id}
+              onClick={() => setEditing(asset)}
+              className="group relative aspect-square rounded-xl overflow-hidden border border-[#27273A] bg-[#12121A] hover:border-purple-500/40 transition-colors text-left"
+            >
+              <img src={asset.imageUrl} alt={asset.name} className="w-full h-full object-cover" loading="lazy" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2.5">
+                <p className="text-xs font-medium text-white truncate">{asset.name}</p>
+                <div className="flex items-center gap-1 mt-1 flex-wrap">
+                  {asset.category && asset.category !== 'Uncategorized' && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/30 text-purple-200">{asset.category}</span>
+                  )}
+                  {asset.menuMatch && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/30 text-emerald-200">↪ {asset.menuMatch}</span>
+                  )}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {dragActive && (
+        <p className="text-center mt-3 text-xs text-purple-300">Drop to upload</p>
+      )}
+
+      {editing && (
+        <AssetEditModal
+          asset={editing}
+          menuItems={menuItems}
+          onSave={async (updates) => {
+            await updateAsset(editing.id, updates);
+            setEditing(null);
+          }}
+          onDelete={async () => {
+            await removeAsset(editing.id);
+            setEditing(null);
+          }}
+          onClose={() => setEditing(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function AssetEditModal({
+  asset,
+  menuItems,
+  onSave,
+  onDelete,
+  onClose,
+}: {
+  asset: MediaAsset;
+  menuItems: MenuItem[];
+  onSave: (updates: Partial<Omit<MediaAsset, 'id' | 'accountId' | 'createdAt'>>) => Promise<void>;
+  onDelete: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(asset.name);
+  const [category, setCategory] = useState(asset.category);
+  const [tags, setTags] = useState<string[]>(asset.tags || []);
+  const [tagInput, setTagInput] = useState('');
+  const [description, setDescription] = useState(asset.description || '');
+  const [menuMatch, setMenuMatch] = useState(asset.menuMatch || '');
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const addTag = () => {
+    const t = tagInput.trim();
+    if (t && !tags.includes(t)) {
+      setTags([...tags, t]);
+      setTagInput('');
+    }
+  };
+  const removeTag = (t: string) => setTags(tags.filter((x) => x !== t));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await onSave({
+        name: name.trim() || asset.name,
+        category: category.trim() || 'Uncategorized',
+        tags,
+        description: description.trim() || null,
+        menuMatch: menuMatch || null,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const del = async () => {
+    if (!window.confirm('Delete this asset? This cannot be undone.')) return;
+    setDeleting(true);
+    try {
+      await onDelete();
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const inputCls = 'w-full bg-[#12121A] border border-[#27273A] rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 outline-none focus:border-purple-500/40 transition-colors';
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-[#0A0A0F] border border-[#27273A] rounded-2xl w-full max-w-4xl max-h-[90dvh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-5 border-b border-[#27273A] sticky top-0 bg-[#0A0A0F] z-10">
+          <h3 className="text-lg font-medium text-white">Edit Asset</h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-[#181824] transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 p-5">
+          <div className="rounded-xl overflow-hidden bg-[#12121A] border border-[#27273A] self-start">
+            <img src={asset.imageUrl} alt={asset.name} className="w-full h-auto" />
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-1.5">Name</label>
+              <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
+            </div>
+
+            <div>
+              <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-1.5">Category</label>
+              <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. menu-item, hero-image, logo" className={inputCls} />
+            </div>
+
+            <div>
+              <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-1.5">Linked Menu Item</label>
+              <select value={menuMatch} onChange={(e) => setMenuMatch(e.target.value)} className={inputCls}>
+                <option value="">(none)</option>
+                {menuItems.map((m) => (
+                  <option key={m.id} value={m.name}>
+                    {m.name}{m.category ? ` — ${m.category}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-1.5 flex items-center gap-1.5">
+                <TagIcon size={10} /> Tags
+              </label>
+              {tags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {tags.map((t) => (
+                    <span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 text-[11px] border border-purple-500/20">
+                      {t}
+                      <button onClick={() => removeTag(t)} className="text-purple-400 hover:text-white"><X size={10} /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <input
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
+                placeholder="Type a tag and press Enter"
+                className={inputCls}
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-1.5">Description</label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Optional context for the AI…"
+                rows={3}
+                className={`${inputCls} resize-none`}
+              />
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <button
+                onClick={del}
+                disabled={deleting || saving}
+                className="text-[11px] text-red-400 hover:text-red-300 flex items-center gap-1 disabled:opacity-50"
+              >
+                <Trash2 size={11} /> {deleting ? 'Deleting…' : 'Delete asset'}
+              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={onClose} className="px-3 py-2 rounded-lg text-zinc-400 hover:text-white text-sm">Cancel</button>
+                <button
+                  onClick={save}
+                  disabled={saving || deleting}
+                  className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium disabled:opacity-50 transition-colors"
+                >
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </motion.div>
     </div>
   );
 }
@@ -964,6 +1318,8 @@ function AccountFormModal({
     email: src.email || account?.email || '',
     industry: src.industry || account?.industry || '',
     website: src.website || account?.website || '',
+    phone: src.phone || account?.phone || '',
+    address: src.address || account?.address || '',
     description: src.description || account?.description || '',
     brandVoice: account?.brandVoice || '',
     targetAudience: account?.targetAudience || '',
@@ -971,8 +1327,10 @@ function AccountFormModal({
     primaryLogo: src.logo || account?.primaryLogo || '',
     lightLogo: account?.lightLogo || '',
     darkLogo: account?.darkLogo || '',
+    simplisticLogo: account?.simplisticLogo || '',
     brandFont: account?.brandFont || '',
     brandFontData: account?.brandFontData || '',
+    brandFontImage: account?.brandFontImage || '',
     platform: account?.platform || '',
     monthlyRetainer: account?.monthlyRetainer || '',
     contractStart: account?.contractStart || '',
@@ -1019,13 +1377,16 @@ function AccountFormModal({
       company: form.company, name: form.name || form.company,
       email: form.email || null, industry: form.industry || null,
       website: form.website || null, description: form.description || null,
+      phone: form.phone || null, address: form.address || null,
       brandVoice: form.brandVoice || null, targetAudience: form.targetAudience || null,
       brandColors: form.brandColors ? form.brandColors.split(',').map((s) => s.trim()).filter(Boolean) : null,
       primaryLogo: form.primaryLogo || null,
       lightLogo: form.lightLogo || null,
       darkLogo: form.darkLogo || null,
+      simplisticLogo: form.simplisticLogo || null,
       brandFont: form.brandFont || null,
       brandFontData: form.brandFontData || null,
+      brandFontImage: form.brandFontImage || null,
       socialHandles: Object.keys(socials).length ? socials : null,
       platform: form.platform || null,
       monthlyRetainer: form.monthlyRetainer || null,
@@ -1061,6 +1422,8 @@ function AccountFormModal({
             <div><label className={labelCls}>Email</label><input type="email" className={inputCls} value={form.email} onChange={(e) => set('email', e.target.value)} /></div>
             <div><label className={labelCls}>Industry</label><input className={inputCls} value={form.industry} onChange={(e) => set('industry', e.target.value)} placeholder="e.g. SaaS & Technology" /></div>
             <div><label className={labelCls}>Website</label><input className={inputCls} value={form.website} onChange={(e) => set('website', e.target.value)} placeholder="https://" /></div>
+            <div><label className={labelCls}>Phone</label><input className={inputCls} value={form.phone} onChange={(e) => set('phone', e.target.value)} placeholder="(260) 833-1717" /></div>
+            <div><label className={labelCls}>Address</label><input className={inputCls} value={form.address} onChange={(e) => set('address', e.target.value)} placeholder="4340 W Orland Road, Angola, IN 46703" /></div>
             <div>
               <label className={labelCls}>Account Type</label>
               <select className={inputCls} value={form.accountType} onChange={(e) => set('accountType', e.target.value)}>
@@ -1121,9 +1484,10 @@ function AccountFormModal({
           </div>
           {/* Logo uploads + Brand Colors side-by-side */}
           <div className="border-t border-[#27273A] pt-4">
-            <p className="text-xs text-zinc-400 mb-3 uppercase tracking-wider">Brand Logos</p>
-            <div className="grid grid-cols-3 gap-3">
-              {([['primaryLogo', 'Primary Logo'], ['lightLogo', 'Light Logo'], ['darkLogo', 'Dark Logo']] as const).map(([key, label]) => (
+            <p className="text-xs text-zinc-400 mb-1 uppercase tracking-wider">Brand Logos</p>
+            <p className="text-[10px] text-zinc-600 mb-3 leading-snug">Simplistic = the minimalist mark on its own (e.g. just the icon, no wordmark) for bold, clean placements.</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {([['primaryLogo', 'Primary Logo'], ['lightLogo', 'Light Logo'], ['darkLogo', 'Dark Logo'], ['simplisticLogo', 'Simplistic Logo']] as const).map(([key, label]) => (
                 <div key={key}>
                   <label className={labelCls}>{label}</label>
                   {(form as any)[key] ? (
@@ -1283,6 +1647,42 @@ function AccountFormModal({
               fontData={form.brandFontData || null}
               onFontDataChange={(data) => set('brandFontData', data || '')}
             />
+
+            {/* Font style image — visual reference for the AI composer */}
+            <div className="mt-4">
+              <label className={labelCls}>Font style image — for AI</label>
+              <p className="text-[10px] text-zinc-600 mb-2 leading-snug">
+                Can't find the right Google font? Upload a photo or screenshot of a lettering style you want to replicate.
+                The Composer will hand this to the image model as a visual reference so generated text matches this style.
+              </p>
+              {form.brandFontImage ? (
+                <div className="relative group inline-block">
+                  <div className="rounded-lg border border-[#27273A] bg-white flex items-center justify-center p-2 max-w-xs">
+                    <img src={form.brandFontImage} alt="Font style reference" className="max-h-32 max-w-full object-contain" />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => set('brandFontImage', '')}
+                    className="absolute top-1 right-1 p-1 rounded bg-black/70 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Remove font style image"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ) : (
+                <label className="w-full h-24 rounded-lg border-2 border-dashed border-[#27273A] flex flex-col items-center justify-center cursor-pointer hover:border-zinc-600 transition-colors bg-[#0A0A0F]">
+                  <Upload size={16} className="text-zinc-500 mb-1" />
+                  <span className="text-[10px] text-zinc-500">Upload font style image</span>
+                  <span className="text-[9px] text-zinc-600">PNG or JPG of the lettering you like</span>
+                  <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const compressed = await compressImage(file, 900, 0.82, 'image/jpeg');
+                    set('brandFontImage', compressed);
+                  }} />
+                </label>
+              )}
+            </div>
           </div>
 
           <div className="border-t border-[#27273A] pt-4">

@@ -146,7 +146,7 @@ export default function QuoteGenerator() {
 
   // Logo
   const [showLogo, setShowLogo] = usePersistedState<boolean>('quote.showLogo', false);
-  const [logoVariant, setLogoVariant] = usePersistedState<'primary' | 'light' | 'dark'>('quote.logoVariant', 'light');
+  const [logoVariant, setLogoVariant] = usePersistedState<'primary' | 'light' | 'dark' | 'simplistic'>('quote.logoVariant', 'light');
   const [logoPosition, setLogoPosition] = usePersistedState<LogoPosition>('quote.logoPosition', 'bottom-right');
   const [logoSize, setLogoSize] = usePersistedState<number>('quote.logoSize', 60);
 
@@ -196,12 +196,13 @@ export default function QuoteGenerator() {
     }
 
     // Auto-enable logo if available
-    const hasLogo = selectedAccount.primaryLogo || selectedAccount.lightLogo || selectedAccount.darkLogo;
+    const hasLogo = selectedAccount.primaryLogo || selectedAccount.lightLogo || selectedAccount.darkLogo || selectedAccount.simplisticLogo;
     if (hasLogo) {
       setShowLogo(true);
       if (selectedAccount.lightLogo) setLogoVariant('light');
       else if (selectedAccount.primaryLogo) setLogoVariant('primary');
       else if (selectedAccount.darkLogo) setLogoVariant('dark');
+      else if (selectedAccount.simplisticLogo) setLogoVariant('simplistic');
     }
   }, [selectedAccountId]);
 
@@ -216,7 +217,9 @@ export default function QuoteGenerator() {
       ? selectedAccount.lightLogo
       : logoVariant === 'dark'
         ? selectedAccount.darkLogo
-        : selectedAccount.primaryLogo
+        : logoVariant === 'simplistic'
+          ? selectedAccount.simplisticLogo
+          : selectedAccount.primaryLogo
     : null;
 
   // ── Upload background ─────────────────────────────────
@@ -694,6 +697,7 @@ export default function QuoteGenerator() {
                               ['primary', 'Primary', selectedAccount.primaryLogo],
                               ['light', 'Light', selectedAccount.lightLogo],
                               ['dark', 'Dark', selectedAccount.darkLogo],
+                              ['simplistic', 'Simple', selectedAccount.simplisticLogo],
                             ] as const).filter(([, , url]) => url).map(([key, label]) => (
                               <button
                                 key={key}

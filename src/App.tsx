@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import IsometricOffice from './components/IsometricOffice';
 import ContentCreation from './components/ContentCreation';
+import CreativeWriter from './components/CreativeWriter';
 import SocialAnalytics from './components/SocialAnalytics';
 import FlowBucket from './components/FlowBucket';
 import AccountsCRM from './components/AccountsCRM';
@@ -28,7 +29,6 @@ import {
   Send,
   Copy,
   ChevronDown,
-  CheckCircle,
   Menu,
   X,
   ArrowUpRight,
@@ -36,7 +36,6 @@ import {
   TrendingUp,
   FileText,
   Plus,
-  Eye,
   RefreshCw,
   ChevronRight,
   Package,
@@ -51,6 +50,7 @@ import {
   Edit3,
   LogOut,
   Settings as SettingsIcon,
+  Feather,
 } from '@geist-ui/icons';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -66,6 +66,7 @@ const navItems: {
   { id: 'tasks', label: 'Tasks', icon: CheckSquare, path: '/tasks', featured: true },
   { id: 'accounts', label: 'Accounts', icon: Users, path: '/accounts' },
   { id: 'content', label: 'Content Creation', icon: Edit3, path: '/content' },
+  { id: 'writer', label: 'Creative Writer', icon: Feather, path: '/writer' },
   { id: 'social', label: 'Social Analytics', icon: TrendingUp, path: '/social' },
   { id: 'prospecting', label: 'Prospecting', icon: Target, path: '/prospecting' },
   { id: 'services', label: 'Services', icon: Briefcase, path: '/services' },
@@ -73,28 +74,6 @@ const navItems: {
   { id: 'financials', label: 'Financials', icon: DollarSign, path: '/financials' },
   { id: 'settings', label: 'Settings', icon: SettingsIcon, path: '/settings' },
 ];
-
-// ─── Mock Data: Accounts ────────────────────────────────────
-const suggestedSteps = [
-  { text: "Follow up with Pinnacle Group regarding Q2 strategy call", type: "follow-up" },
-  { text: "Prepare NovaTech for quarterly business review", type: "review" },
-  { text: "Onboarding check-in for Meridian Labs — Week 2", type: "onboarding" },
-  { text: "Upsell SEO package to Crestline Brands", type: "upsell" },
-];
-
-const communications = [
-  { id: 1, name: "Sarah Mitchell", company: "Pinnacle Group", time: "12 min ago", message: "Hey team, just wanted to check in on the social media calendar for March. Can we schedule a quick sync?", avatar: "https://i.pravatar.cc/150?u=sarah", platform: "Slack", unread: true },
-  { id: 2, name: "James Ortega", company: "NovaTech", time: "2h ago", message: "Monthly performance report looks great. Can we discuss the paid ads recommendations?", avatar: "https://i.pravatar.cc/150?u=james", platform: "Email", unread: false },
-  { id: 3, name: "Lisa Chen", company: "Meridian Labs", time: "5h ago", message: "We are onboarding our new product line next month. Can we get ahead on the content strategy?", avatar: "https://i.pravatar.cc/150?u=lisa", platform: "Slack", unread: true },
-  { id: 4, name: "David Park", company: "Crestline Brands", time: "1d ago", message: "Really happy with the social growth this quarter. Let's talk about expanding into email marketing.", avatar: "https://i.pravatar.cc/150?u=david", platform: "Email", unread: false },
-];
-
-const drafts = [
-  { id: 1, client: "Pinnacle Group", title: "Q2 Strategy Sync — Calendar Invite Follow-Up", content: "Hi Sarah, great to hear from you! I've prepared the March social calendar and attached it below. I'd love to schedule a 30-minute sync this Thursday at 2 PM to walk through the content themes and make sure everything aligns with your Q2 launch timeline. Let me know if that works!", priority: "high" },
-  { id: 2, client: "NovaTech", title: "Monthly Performance Deep-Dive + Paid Ads Proposal", content: "Hi James, glad the report resonated! As you mentioned, the paid ads section has some strong opportunities. I've put together a brief proposal for scaling your Google Ads budget by 20% — projected to drive an additional 1,200 qualified leads this quarter. Attached for your review.", priority: "medium" },
-  { id: 3, client: "Meridian Labs", title: "Week 2 Onboarding Check-In + Content Strategy Kickoff", content: "Hi Lisa, thanks for the heads-up on the new product line! I've started drafting a content strategy framework that covers blog posts, social campaigns, and email sequences for the launch. Let's schedule a kickoff call next Tuesday to align on messaging and timelines.", priority: "high" },
-];
-
 
 // ─── Mock Data: Reports ─────────────────────────────────────
 const reportClients = [
@@ -238,12 +217,7 @@ function AuthenticatedApp({
 }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const pathSegments = location.pathname.split('/').filter(Boolean);
-  const accountsSubTab: 'overview' | 'crm' =
-    pathSegments[0] === 'accounts' && pathSegments[1] === 'crm' ? 'crm' : 'overview';
 
-  const [message, setMessage] = useState('');
-  const [isCopied, setIsCopied] = useState<number | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedReportClient, setSelectedReportClient] = useState<number | null>(null);
   const [isAgentDropdownOpen, setIsAgentDropdownOpen] = useState(false);
@@ -263,7 +237,6 @@ function AuthenticatedApp({
   const dashboardQuickActions = useMemo(() => {
     const items = [
       { label: "Tasks", sub: "Featured — agency task workspace", path: "/tasks", icon: CheckSquare, featured: true as const },
-      { label: "Review Drafts", sub: "3 pending communications", path: "/accounts", icon: FileText },
       { label: "Service Health", sub: "1 SOP needs attention", path: "/services", icon: Shield },
       { label: "Generate Reports", sub: "1 overdue report", path: "/reports", icon: BarChart2 },
       { label: "Scope Creep Alerts", sub: "4 active warnings", path: "/financials", icon: AlertTriangle },
@@ -274,11 +247,6 @@ function AuthenticatedApp({
 
   // ─── Local UI state (no backend agent system yet) ───────
   const activityItems: any[] = [];
-  const accountsChat = {
-    messages: [] as { role: 'user' | 'assistant'; content: string }[],
-    loading: false,
-    sendMessage: (_msg: string) => { /* AI Account Agent chat is not yet wired up. */ },
-  };
   const currentTasks: Record<string, string> = {};
 
   useEffect(() => {
@@ -300,11 +268,6 @@ function AuthenticatedApp({
   const toggleAgent = (id: string) => {
     if (id === 'orchestrator') return; // Can't disable orchestrator
     setAgentStates(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const handleCopy = (id: number) => {
-    setIsCopied(id);
-    setTimeout(() => setIsCopied(null), 2000);
   };
 
   // ─── Dashboard Tab ──────────────────────────────────────
@@ -474,213 +437,16 @@ function AuthenticatedApp({
       transition={{ duration: 0.4 }}
       className="max-w-7xl mx-auto"
     >
-      {/* Header + Sub-tabs */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
         <div>
-          <h2 className="text-3xl font-semibold text-white">Accounts</h2>
-          <p className="text-zinc-400 text-sm mt-1">AI-powered client relationship management</p>
-        </div>
-      </div>
-      <div className="-mx-4 sm:mx-0 mb-6 sm:mb-8 overflow-x-auto scrollbar-hide">
-        <div className="flex items-center gap-1 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-max mx-4 sm:mx-0 sm:w-fit">
-          {([['overview', 'AI Overview'], ['crm', 'CRM']] as const).map(([id, label]) => (
-            <button
-              key={id}
-              onClick={() => navigate(id === 'overview' ? '/accounts' : `/accounts/${id}`)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
-                accountsSubTab === id
-                  ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-[0_0_10px_rgba(168,85,247,0.2)]'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+          <h2 className="text-3xl font-semibold text-white">
+            Accounts <span className="text-zinc-500 font-normal">(Second Brain)</span>
+          </h2>
+          <p className="text-zinc-400 text-sm mt-1">Per-client memory bank — fuels every AI workflow in the app</p>
         </div>
       </div>
 
-      {accountsSubTab === 'crm' ? <AccountsCRM /> : (<>
-
-      {/* AI Overview content */}
-
-      {/* Chat Panel */}
-      <div className="bg-[#12121A] border border-[#27273A] rounded-3xl p-6 sm:p-8 relative overflow-hidden mb-8 shadow-lg">
-        <div className="absolute top-8 left-8">
-          <Star className="text-purple-500 w-8 h-8" />
-        </div>
-        <div className="absolute top-12 right-12">
-          <Star className="text-purple-500/40 w-5 h-5" />
-        </div>
-
-        <div className="max-w-4xl mx-auto mt-8 sm:mt-12 mb-4">
-          <div className="text-center mb-6">
-            <h3 className="text-xl font-medium text-white mb-2">What can I help you with?</h3>
-            <p className="text-sm text-zinc-500">Ask about clients, draft communications, check relationship health, or get upsell ideas</p>
-          </div>
-          <div className="relative rounded-full bg-[#0A0A0F] border border-purple-500/30 shadow-[0_0_20px_rgba(168,85,247,0.15)] p-1.5 flex items-center transition-all focus-within:border-purple-500/60 focus-within:shadow-[0_0_30px_rgba(168,85,247,0.25)]">
-            <input
-              type="text"
-              placeholder="Type a message to your AI Account Agent..."
-              className="flex-1 bg-transparent border-none outline-none text-white placeholder-zinc-500 px-6 py-3 text-base sm:text-lg"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && message.trim() && !accountsChat.loading) {
-                  accountsChat.sendMessage(message.trim());
-                  setMessage('');
-                }
-              }}
-            />
-            <button
-              className="p-3 mr-1 rounded-full text-purple-400 hover:bg-purple-500/10 transition-colors disabled:opacity-50"
-              disabled={accountsChat.loading || !message.trim()}
-              onClick={() => {
-                if (message.trim()) {
-                  accountsChat.sendMessage(message.trim());
-                  setMessage('');
-                }
-              }}
-            >
-              <Send size={20} className="sm:w-6 sm:h-6" />
-            </button>
-          </div>
-
-          {/* Chat Messages */}
-          {accountsChat.messages.length > 0 && (
-            <div className="mt-6 space-y-4 max-h-96 overflow-y-auto">
-              {accountsChat.messages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] rounded-2xl px-5 py-3 text-sm ${
-                    msg.role === 'user'
-                      ? 'bg-purple-600/30 text-purple-100 border border-purple-500/30'
-                      : 'bg-[#0A0A0F] text-zinc-300 border border-[#27273A]'
-                  }`}>
-                    {msg.content}
-                  </div>
-                </div>
-              ))}
-              {accountsChat.loading && (
-                <div className="flex justify-start">
-                  <div className="bg-[#0A0A0F] border border-[#27273A] rounded-2xl px-5 py-3 text-sm text-zinc-500">
-                    Thinking...
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Suggested Steps */}
-        <div className="mt-10">
-          <h3 className="text-sm font-medium text-zinc-400 mb-4 uppercase tracking-wider">AI Suggested Next Steps</h3>
-          <div className="flex gap-3 overflow-x-auto pb-4 scrollbar-hide">
-            {suggestedSteps.map((step, i) => (
-              <button key={i} className="flex-shrink-0 px-5 py-3.5 rounded-2xl border border-[#27273A] bg-[#0A0A0F] hover:border-purple-500/50 transition-colors text-sm text-zinc-300 max-w-[280px] text-left flex items-start gap-3">
-                <span className={`mt-0.5 w-2 h-2 rounded-full shrink-0 ${
-                  step.type === 'follow-up' ? 'bg-blue-400' : step.type === 'review' ? 'bg-amber-400' : step.type === 'onboarding' ? 'bg-emerald-400' : 'bg-purple-400'
-                }`}></span>
-                {step.text}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Scores */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-8 pt-6 border-t border-[#27273A] gap-6">
-          <div className="flex-1 w-full max-w-md">
-            <div className="flex justify-between text-sm mb-3">
-              <span className="text-zinc-400">Overall Relationship Health</span>
-              <span className="text-purple-400 font-medium">87%</span>
-            </div>
-            <div className="h-2 bg-[#0A0A0F] rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-purple-600 to-purple-400 w-[87%] rounded-full"></div>
-            </div>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <p className="text-xs text-zinc-500 mb-1">Agent Relationship Score</p>
-              <span className="bg-gradient-to-r from-purple-600 to-purple-500 px-4 py-1.5 rounded-lg text-white font-semibold text-lg shadow-[0_0_15px_rgba(168,85,247,0.3)]">98</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Two Columns */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left Column: Client Communications */}
-        <div className="bg-[#12121A] border border-[#27273A] rounded-3xl p-6 sm:p-8 shadow-lg">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-medium text-white">Client Communications</h3>
-            <span className="text-xs px-2.5 py-1 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">
-              {communications.filter(c => c.unread).length} unread
-            </span>
-          </div>
-          <div className="space-y-1">
-            {communications.map((comm) => (
-              <div key={comm.id} className="flex gap-4 p-4 rounded-2xl hover:bg-[#181824] transition-colors cursor-pointer group">
-                <div className="relative">
-                  <img src={comm.avatar} alt="" className="w-10 h-10 rounded-full border border-[#27273A]" />
-                  {comm.unread && <div className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-purple-500 rounded-full border-2 border-[#12121A]"></div>}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-start mb-1">
-                    <div>
-                      <h4 className={`font-medium text-sm ${comm.unread ? 'text-white' : 'text-zinc-300'}`}>{comm.name}</h4>
-                      <p className="text-xs text-zinc-500">{comm.company}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-[#27273A] text-zinc-400 border border-zinc-700">{comm.platform}</span>
-                      <span className="text-xs text-zinc-600">{comm.time}</span>
-                    </div>
-                  </div>
-                  <p className="text-sm text-zinc-400 mt-1.5 leading-relaxed truncate">{comm.message}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Right Column: AI Agent Drafts */}
-        <div className="bg-[#12121A] border border-[#27273A] rounded-3xl p-6 sm:p-8 shadow-lg">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-medium text-white">AI Agent Drafts</h3>
-            <span className="text-xs text-zinc-500">{drafts.length} ready to send</span>
-          </div>
-          <div className="space-y-4">
-            {drafts.map((draft) => (
-              <div key={draft.id} className="border border-purple-500/20 bg-[#0A0A0F] rounded-2xl p-5 relative overflow-hidden group hover:border-purple-500/50 transition-all">
-                <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                <div className="flex items-center gap-2 mb-2 relative z-10">
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                    draft.priority === 'high' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                  }`}>
-                    {draft.priority === 'high' ? 'High Priority' : 'Medium Priority'}
-                  </span>
-                  <span className="text-[10px] text-zinc-600">{draft.client}</span>
-                </div>
-                <h4 className="font-medium text-sm text-white mb-2 relative z-10">{draft.title}</h4>
-                <p className="text-sm text-zinc-400 mb-4 line-clamp-2 relative z-10 leading-relaxed">{draft.content}</p>
-                <div className="flex items-center gap-3 relative z-10">
-                  <button
-                    onClick={() => handleCopy(draft.id)}
-                    className="bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white text-xs font-medium px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(168,85,247,0.2)]"
-                  >
-                    {isCopied === draft.id ? (
-                      <><CheckCircle size={14} /> Copied!</>
-                    ) : (
-                      <><Copy size={14} /> Copy Draft</>
-                    )}
-                  </button>
-                  <button className="text-xs text-zinc-500 hover:text-purple-400 transition-colors flex items-center gap-1.5 px-3 py-2.5">
-                    <Eye size={14} /> Preview Full
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-      </>)}
+      <AccountsCRM />
     </motion.div>
   );
 
@@ -881,9 +647,10 @@ function AuthenticatedApp({
       <Route path="/dashboard" element={renderDashboard()} />
       <Route path="/tasks" element={<Tasks user={user} />} />
       <Route path="/accounts" element={renderAccounts()} />
-      <Route path="/accounts/:view" element={renderAccounts()} />
       <Route path="/content" element={<ContentCreation />} />
       <Route path="/content/:tool" element={<ContentCreation />} />
+      <Route path="/writer" element={<CreativeWriter user={user} />} />
+      <Route path="/writer/:bookId" element={<CreativeWriter user={user} />} />
       <Route path="/social" element={<SocialAnalytics />} />
       <Route path="/prospecting" element={<Prospecting user={user} />} />
       <Route path="/services" element={<Services />} />
@@ -926,7 +693,7 @@ function AuthenticatedApp({
 
       {/* Sidebar */}
       <aside className={`
-        fixed lg:sticky top-0 left-0 h-screen w-64 bg-[#12121A] border-r border-[#27273A] flex flex-col z-50
+        fixed lg:sticky top-0 left-0 h-dvh w-64 bg-[#12121A] border-r border-[#27273A] flex flex-col z-50
         transition-transform duration-300 ease-in-out
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
@@ -1003,7 +770,7 @@ function AuthenticatedApp({
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
+      <main className="flex-1 flex flex-col min-w-0 h-dvh overflow-hidden">
         {/* Top Header */}
         <header className="h-16 border-b border-[#27273A] bg-[#0A0A0F]/80 backdrop-blur-md sticky top-0 z-20 flex items-center justify-between px-4 lg:px-8 shrink-0 pt-safe">
           <div className="flex items-center gap-2 lg:gap-4">
@@ -1044,7 +811,7 @@ function AuthenticatedApp({
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: 8, scale: 0.96 }}
                     transition={{ duration: 0.2 }}
-                    className="absolute right-0 top-full mt-2 w-[380px] bg-[#12121A] border border-[#27273A] rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] overflow-hidden z-50"
+                    className="absolute right-0 top-full mt-2 w-[min(380px,calc(100vw-2rem))] bg-[#12121A] border border-[#27273A] rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] overflow-hidden z-50"
                   >
                     {/* Dropdown Header */}
                     <div className="px-5 py-4 border-b border-[#27273A]">

@@ -142,5 +142,55 @@ service cloud.firestore {
     match /schedule_handoffs/{handoffId} {
       allow read, write: if hasAppAccess();
     }
+
+    // ── Creative Writer (book-writing studio) ──
+    match /books/{bookId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /book_chapters/{chapterId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /book_drafts/{draftId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /book_characters/{characterId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /book_lore/{loreId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /book_plot_threads/{threadId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /book_scenes/{sceneId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    // Sessions + their turns subcollection (live roundtable feed).
+    match /creative_sessions/{sessionId} {
+      allow read, write: if hasAppAccess();
+
+      match /{document=**} {
+        allow read, write: if hasAppAccess();
+      }
+    }
+
+    match /nexus_reports/{reportId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /nexus_proposals/{proposalId} {
+      allow read, write: if hasAppAccess();
+    }
+
+    match /craft_plans/{planId} {
+      allow read, write: if hasAppAccess();
+    }
   }
 }

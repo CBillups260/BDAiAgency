@@ -2,6 +2,20 @@ import { Router } from "express";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { toFile } from "openai/uploads";
+import { removeWatermark } from "../lib/watermark.js";
+import {
+  removeInvisibleWatermark,
+  isInvisibleRemovalConfigured,
+  SynthIDServiceError,
+} from "../lib/synthidService.js";
+import { generateFalImage, isFalModel } from "../lib/falImage.js";
+
+// Our own directly-integrated (non-Fal) image models.
+const DIRECT_IMAGE_MODELS = [
+  "gemini-3-pro-image-preview",
+  "gemini-3.1-flash-image-preview",
+  "gpt-image-2",
+];
 
 const router = Router();
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -26,7 +40,12 @@ function isValidOpenAIRatio(r: string): boolean {
 }
 
 // gpt-image-2 accepts arbitrary WxH strings with both edges multiples of 16,
-// ratios between 1:3 and 3:1, and max edge up to 2560 (2K).
+// ratios between 1:3 and 3:1, total pixels 655,360–8,294,400, max edge 3840.
+// Outputs above 2560x1440 are flagged "experimental" by OpenAI.
+//
+// Note: the max-edge target only fits the pixel budget for ~16:9 ratios. For
+// squarer or portrait ratios (1:1, 4:5, etc.) at 4K, we scale down so total
+// pixels stay under 8,294,400, then floor-round to multiples of 16.
 function openaiSize(aspectRatio: string, resolution: string): string {
   const [wRaw, hRaw] = aspectRatio.split(":").map(Number);
   if (!wRaw || !hRaw) return "1024x1024";
@@ -34,18 +53,35 @@ function openaiSize(aspectRatio: string, resolution: string): string {
     resolution === "512" ? 768 :
     resolution === "1K" ? 1536 :
     resolution === "2K" ? 2048 :
-    2560;
-  const round16 = (n: number) => Math.max(256, Math.round(n / 16) * 16);
+    resolution === "4K" ? 3840 :
+    2048;
+  const MAX_PIXELS = 8_294_400;
+  const MIN_EDGE = 256;
+
   let width: number;
   let height: number;
   if (wRaw >= hRaw) {
     width = maxEdgeTarget;
-    height = round16(maxEdgeTarget * (hRaw / wRaw));
+    height = maxEdgeTarget * (hRaw / wRaw);
   } else {
     height = maxEdgeTarget;
-    width = round16(maxEdgeTarget * (wRaw / hRaw));
+    width = maxEdgeTarget * (wRaw / hRaw);
   }
-  return `${width}x${height}`;
+  const pixels = width * height;
+  if (pixels > MAX_PIXELS) {
+    const scale = Math.sqrt(MAX_PIXELS / pixels);
+    width *= scale;
+    height *= scale;
+  }
+  // Floor-round to 16 — rounding to nearest could push back over the budget.
+  const floor16 = (n: number) => Math.max(MIN_EDGE, Math.floor(n / 16) * 16);
+  return `${floor16(width)}x${floor16(height)}`;
+}
+
+type OpenAIQuality = "low" | "medium" | "high" | "auto";
+function normalizeQuality(q: unknown): OpenAIQuality | undefined {
+  if (q === "low" || q === "medium" || q === "high" || q === "auto") return q;
+  return undefined;
 }
 
 router.post("/generate-image", async (req, res) => {
@@ -116,6 +152,73 @@ router.post("/generate-image", async (req, res) => {
 
     res.status(statusCode).json({ error: userMessage });
   }
+});
+
+// ─── AI Watermark Remover (visible Gemini sparkle + AI metadata) ─
+//
+// CPU-only, offline. Reverse-alpha-blends the Gemini "Nano Banana" sparkle out of
+// the corner (recovering the true pixels, NOT regenerating the image through a
+// model — which would re-stamp a fresh watermark) and strips the C2PA / EXIF /
+// XMP "Made with AI" provenance. See functions/src/lib/watermark.ts.
+
+router.post("/remove-watermark", async (req, res) => {
+  try {
+    const {
+      image,
+      removeSparkle = true,
+      stripMetadata = true,
+      removeInvisible = false,
+      vendor = "google",
+    } = req.body as {
+      image: { base64: string; mimeType?: string };
+      removeSparkle?: boolean;
+      stripMetadata?: boolean;
+      removeInvisible?: boolean;
+      vendor?: "google" | "openai" | "unknown";
+    };
+
+    if (!image?.base64) {
+      return res.status(400).json({ error: "An image is required." });
+    }
+
+    // Stage 1 (local, fast): visible sparkle + metadata strip.
+    const result = await removeWatermark(image.base64, { removeSparkle, stripMetadata });
+    const report: Record<string, unknown> = { ...result.report, invisibleRemoved: false };
+    let outBase64 = result.base64;
+    let outMime = result.mimeType;
+
+    // Stage 2 (GPU, slow): invisible SynthID removal via diffusion regeneration.
+    // Runs on the already-de-sparkled pixels. Re-encodes to PNG, so metadata stays
+    // stripped regardless.
+    if (removeInvisible) {
+      const invisible = await removeInvisibleWatermark(outBase64, vendor);
+      outBase64 = invisible.base64;
+      outMime = "image/png";
+      report.invisibleRemoved = true;
+      report.invisibleMethod = invisible.method;
+      report.metadataStripped = true;
+      if (invisible.width) report.width = invisible.width;
+      if (invisible.height) report.height = invisible.height;
+    }
+
+    res.json({
+      images: [{ base64: outBase64, mimeType: outMime }],
+      report,
+    });
+  } catch (err: any) {
+    console.error("Watermark removal error:", err?.message || err);
+    if (err instanceof SynthIDServiceError) {
+      // 501 when the GPU service simply isn't set up yet; 502 for a runtime failure.
+      return res.status(err.notConfigured ? 501 : 502).json({ error: err.message });
+    }
+    res.status(500).json({ error: err?.message || "Failed to remove watermark." });
+  }
+});
+
+// Lets the UI show/enable the invisible-removal toggle only when the GPU service
+// is actually configured.
+router.get("/remove-watermark/capabilities", (_req, res) => {
+  res.json({ invisibleAvailable: isInvisibleRemovalConfigured() });
 });
 
 // ─── Background Extraction (remove subject, keep background) ─
@@ -208,12 +311,16 @@ router.post("/generate-composite", async (req, res) => {
       model = "gemini-3-pro-image-preview",
       aspectRatio = "1:1",
       thinkingLevel = "",
+      resolution = "2K",
+      quality: rawQuality,
       references = [],
     } = req.body as {
       prompt?: string;
       model?: string;
       aspectRatio?: AspectRatio;
       thinkingLevel?: string;
+      resolution?: string;
+      quality?: string;
       references?: { base64: string; mimeType: string; label: string }[];
     };
 
@@ -224,8 +331,10 @@ router.post("/generate-composite", async (req, res) => {
       return res.status(400).json({ error: "Maximum 8 reference images." });
     }
 
-    const allowedModels = ["gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview", "gpt-image-2"];
-    const selectedModel = allowedModels.includes(model) ? model : "gemini-3-pro-image-preview";
+    const selectedModel =
+      isFalModel(model) || DIRECT_IMAGE_MODELS.includes(model)
+        ? model
+        : "gemini-3-pro-image-preview";
 
     const isOpenAI = selectedModel === "gpt-image-2";
     const validRatio = isOpenAI
@@ -255,10 +364,14 @@ ${prompt.trim()}
 Produce a single photorealistic output image that follows this instruction precisely.`;
     }
 
+    const allowedRes = ["1K", "2K", "4K"];
+    const selectedRes = allowedRes.includes(resolution) ? resolution : "2K";
+
     const images: { base64: string; mimeType: string }[] = [];
 
     if (selectedModel === "gpt-image-2") {
-      const size = openaiSize(aspectRatio, "2K");
+      const size = openaiSize(aspectRatio, selectedRes);
+      const quality: OpenAIQuality = normalizeQuality(rawQuality) ?? "high";
       const openaiPrompt = `Photorealistic. ${fullPrompt}`;
 
       let result;
@@ -278,19 +391,28 @@ Produce a single photorealistic output image that follows this instruction preci
           image: imageFiles as any,
           prompt: openaiPrompt,
           size: size as any,
-          quality: "high",
+          quality,
         });
       } else {
         result = await openai.images.generate({
           model: "gpt-image-2",
           prompt: openaiPrompt,
           size: size as any,
-          quality: "high",
+          quality,
         });
       }
 
       const b64 = result.data?.[0]?.b64_json;
       if (b64) images.push({ base64: b64, mimeType: "image/png" });
+    } else if (isFalModel(selectedModel)) {
+      const falImages = await generateFalImage({
+        model: selectedModel,
+        prompt: fullPrompt,
+        aspectRatio,
+        resolution: selectedRes,
+        references: references.map((r) => ({ base64: r.base64, mimeType: r.mimeType })),
+      });
+      images.push(...falImages);
     } else {
       const parts: any[] = [];
       for (const ref of references) {
@@ -302,7 +424,7 @@ Produce a single photorealistic output image that follows this instruction preci
         responseModalities: ["TEXT", "IMAGE"],
         imageConfig: {
           aspectRatio: aspectRatio as AspectRatio,
-          imageSize: "1K",
+          imageSize: selectedRes,
         },
       };
       if (selectedModel === "gemini-3.1-flash-image-preview" && thinkingLevel) {
@@ -366,8 +488,13 @@ router.post("/generate-asset", async (req, res) => {
       details = "",
       composition = "",
       aspectRatio = "1:1",
+      rotation = 0,
+      rotationMode = "subject",
       referenceImage,
       variationIndex = 0,
+      quality: rawQuality,
+      detailPreset = "",
+      detailChips = [],
     } = req.body as {
       dishName?: string;
       model?: string;
@@ -383,12 +510,19 @@ router.post("/generate-asset", async (req, res) => {
       details?: string;
       composition?: string;
       aspectRatio?: AspectRatio;
+      rotation?: number;
+      rotationMode?: "subject" | "canvas";
       referenceImage?: { base64: string; mimeType: string };
       variationIndex?: number;
+      quality?: string;
+      detailPreset?: string;
+      detailChips?: string[];
     };
 
-    const allowedModels = ["gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview", "gpt-image-2"];
-    const selectedModel = allowedModels.includes(model) ? model : "gemini-3-pro-image-preview";
+    const selectedModel =
+      isFalModel(model) || DIRECT_IMAGE_MODELS.includes(model)
+        ? model
+        : "gemini-3-pro-image-preview";
     const allowedRes = ["512", "1K", "2K", "4K"];
     const selectedRes = allowedRes.includes(resolution) ? resolution : "1K";
 
@@ -486,6 +620,37 @@ router.post("/generate-asset", async (req, res) => {
       "shadow-play":   "Transform with dramatic shadow artistry. Intensify all shadow patterns, create deep contrast, and make light-and-shadow the visual story. The atmosphere should shift to moody, dramatic, and visually compelling.",
       "outdoor-nature":"Transform into vibrant outdoor nature photography. Boost greens and natural earth tones aggressively, add fresh outdoor light quality with warmth and depth. The product should feel perfectly at home in a lush natural setting.",
     };
+
+    // ── DETAIL BOOST ────────────────────────────────────────
+    // Optional quality-cue language appended to enhance prompts. Two inputs:
+    //   - detailPreset: one of "" | "fine" | "ultra" | "hyper" (escalating intensity)
+    //   - detailChips:  multi-select targeted boosters
+    // Skip subtle-variations (deliberately minimal) and transform modes.
+    const detailPresetText: Record<string, string> = {
+      fine:  "Render with crisp, fine-detail clarity — sharper edges, clean textures, refined micro-detail throughout the subject.",
+      ultra: "Render with ultra-sharp, tack-sharp clarity — every texture, edge, and surface detail razor-defined. Lean toward magazine-grade resolution and crispness.",
+      hyper: "Render with hyper-real, maximum-detail resolution — extreme micro-detail, exquisite texture fidelity, every fiber/grain/droplet rendered with reference-quality sharpness. Lean toward 8K, hyper-detailed, ultra-resolution photographic output.",
+    };
+    const detailChipText: Record<string, string> = {
+      "tack-sharp":     "tack-sharp focus on the primary subject",
+      "micro-contrast": "elevated micro-contrast for depth and definition",
+      "texture":        "amplified surface texture detail (without altering color or material)",
+      "noise-free":     "completely clean, noise-free output (no grain, no compression artifacts)",
+      "edge-clarity":   "crisp, well-defined edge clarity across all subject boundaries",
+    };
+    const buildDetailBoost = (): string => {
+      const presetLine = detailPresetText[detailPreset] || "";
+      const chipList = (Array.isArray(detailChips) ? detailChips : [])
+        .map((c) => detailChipText[c])
+        .filter(Boolean);
+      if (!presetLine && chipList.length === 0) return "";
+      const parts: string[] = ["DETAIL & RESOLUTION BOOST:"];
+      if (presetLine) parts.push(presetLine);
+      if (chipList.length) parts.push(`Additionally apply: ${chipList.join("; ")}.`);
+      parts.push("These are quality cues — do NOT use them as an excuse to change the scene, lighting, color palette, or composition.");
+      return "\n\n" + parts.join("\n");
+    };
+    const detailBoostBlock = buildDetailBoost();
 
     // Build prompt based on mode
     let prompt: string;
@@ -806,16 +971,34 @@ ${dishName.trim() ? `The subject is: ${dishName.trim()}.` : ""}`;
     if (details) extras.push(details);
     if (composition && !isEnhanceMode) extras.push(composition);
     if (extras.length) prompt += "\n\nADDITIONAL STYLE ADJUSTMENTS: " + extras.join(". ") + ".";
+    if (detailBoostBlock) prompt += detailBoostBlock;
+
+    // ── ROTATION ────────────────────────────────────────────
+    // Optional geometric rotation. `rotation` is the number of degrees CLOCKWISE
+    // (0 = none), normalized into [0, 360). `rotationMode` controls WHAT rotates:
+    //   - "subject" (default): turn only the subject in place; camera, frame,
+    //     background, and horizon stay fixed and level. Use this for "show the
+    //     item at a different angle" — it does NOT tilt the whole image.
+    //   - "canvas": roll the entire image (Dutch tilt), filling exposed corners.
+    const rotationDeg = (((Math.round(Number(rotation) || 0)) % 360) + 360) % 360;
+    if (rotationDeg !== 0) {
+      if (rotationMode === "canvas") {
+        prompt += `\n\nCANVAS ROTATION (apply last): Rotate the ENTIRE image ${rotationDeg} degrees clockwise — a camera-roll / Dutch tilt where the whole scene, including the background and horizon, turns together. Keep the subject centered and at the same scale, and preserve all colors, lighting, textures, and detail exactly — this is a geometric rotation, not a restyle. Critically, intelligently extend and fill any corners or edges the rotation leaves empty: continue the existing background/surface seamlessly so the final frame is completely filled with NO black or transparent triangles, blank borders, or empty areas.`;
+      } else {
+        prompt += `\n\nSUBJECT ROTATION (apply last): Re-orient ONLY the subject — ${dish}, together with the plate, basket, or vessel it directly sits in or on — turning it in place by ${rotationDeg} degrees clockwise, as if the physical item were picked up and set back down at a new angle on the same spot. Do NOT tilt, roll, or rotate the overall image or the scene: the camera position, framing, crop, horizon, background, surrounding table/surface, napkins, props, and lighting must all stay EXACTLY the same and perfectly level. Only the subject's facing/orientation changes. Re-render the subject convincingly at the new angle with correct perspective, foreshortening, shadows, and contact with the surface, and keep the whole frame naturally filled — no empty space where the subject used to be.`;
+      }
+    }
 
     const images: { base64: string; mimeType: string }[] = [];
 
     if (selectedModel === "gpt-image-2") {
       const openaiPrompt = `Photorealistic. Significantly improve sharpness, lighting, color, and overall polish while keeping the subject the same. The result should look clearly better than the input — a professional retouch, not a near-identical copy. ${prompt}`;
       const size = openaiSize(aspectRatio, selectedRes);
-      const quality: "low" | "medium" | "high" =
+      const fallbackQuality: OpenAIQuality =
         selectedRes === "512" ? "low"
         : selectedRes === "1K" ? "medium"
         : "high";
+      const quality: OpenAIQuality = normalizeQuality(rawQuality) ?? fallbackQuality;
 
       let result;
       if (referenceImage) {
@@ -843,6 +1026,17 @@ ${dishName.trim() ? `The subject is: ${dishName.trim()}.` : ""}`;
 
       const b64 = result.data?.[0]?.b64_json;
       if (b64) images.push({ base64: b64, mimeType: "image/png" });
+    } else if (isFalModel(selectedModel)) {
+      const falImages = await generateFalImage({
+        model: selectedModel,
+        prompt,
+        aspectRatio,
+        resolution: selectedRes,
+        references: referenceImage
+          ? [{ base64: referenceImage.base64, mimeType: referenceImage.mimeType }]
+          : [],
+      });
+      images.push(...falImages);
     } else {
       const parts: any[] = [];
       if (referenceImage) {
@@ -1095,6 +1289,8 @@ router.post("/generate-caption", async (req, res) => {
       topic,
       includeHashtags = true,
       includeEmojis = false,
+      cta,
+      avoidCaptions = [],
     } = req.body as {
       brandContext?: {
         company: string;
@@ -1103,6 +1299,7 @@ router.post("/generate-caption", async (req, res) => {
         brandVoice?: string | null;
         targetAudience?: string | null;
         socialHandles?: Record<string, string> | null;
+        website?: string | null;
       };
       media?: { base64: string; mimeType: string }[];
       platform?: string;
@@ -1110,6 +1307,9 @@ router.post("/generate-caption", async (req, res) => {
       topic?: string;
       includeHashtags?: boolean;
       includeEmojis?: boolean;
+      cta?: { type?: string; label?: string; value?: string };
+      /** Captions already used elsewhere in this batch — the model must not echo them. */
+      avoidCaptions?: string[];
     };
 
     if (!topic?.trim() && media.length === 0) {
@@ -1127,12 +1327,62 @@ router.post("/generate-caption", async (req, res) => {
       brandVoice: brandContext.brandVoice || null,
       targetAudience: brandContext.targetAudience || null,
       socialHandles: brandContext.socialHandles || null,
+      website: brandContext.website || null,
     };
 
     const charLimit = PLATFORM_LIMITS[platform] || 2200;
     const handle = brand.socialHandles?.[platform] || "";
 
     const platformName = platform.charAt(0).toUpperCase() + platform.slice(1);
+
+    // Build CTA instruction from the user-selected CTA type
+    const ctaType = (cta?.type || "auto").toLowerCase();
+    const ctaValueRaw = (cta?.value || "").trim();
+    const ctaInstruction = ((): string => {
+      switch (ctaType) {
+        case "none":
+          return "DO NOT include any call-to-action. End the caption naturally without prompting the reader to take an action, click a link, or visit anywhere.";
+        case "visit-website": {
+          const link = ctaValueRaw || brand.website || "";
+          return `Every caption MUST end with a CTA that drives the reader to the brand's website${link ? ` (${link})` : ""}. Phrase it naturally — "link in bio", "tap the link", "head to our site", etc.${link ? ` Include the URL or a clear pointer to it.` : ""} Vary the wording across the 5 captions.`;
+        }
+        case "call": {
+          const num = ctaValueRaw;
+          return `Every caption MUST end with a CTA telling the reader to call${num ? ` ${num}` : ""}. Phrase it like a real person would: "give us a ring", "call us at ${num || "[phone]"}", "tap to call", etc.${num ? "" : " Use a natural placeholder if no number is provided."} Vary the wording across the 5 captions.`;
+        }
+        case "book-table": {
+          const link = ctaValueRaw || brand.website || "";
+          return `Every caption MUST end with a CTA to book a table / reserve a spot${link ? ` (link: ${link})` : ""}. Phrase it naturally — "book your table", "reserve a spot", "snag a seat", etc.${link ? " Include the link or a clear pointer to it." : ""} Vary the wording across the 5 captions.`;
+        }
+        case "order-online": {
+          const link = ctaValueRaw || brand.website || "";
+          return `Every caption MUST end with a CTA to order online${link ? ` (link: ${link})` : ""}. Phrase it naturally — "order now", "tap to order", "delivery's a tap away", etc.${link ? " Include the link or a clear pointer to it." : ""} Vary the wording across the 5 captions.`;
+        }
+        case "dm-to-book":
+          return "Every caption MUST end with a CTA telling the reader to DM the brand to book / reserve / inquire. Phrase it naturally — \"slide into our DMs\", \"DM us to book\", \"send us a message\", etc. Vary the wording across the 5 captions.";
+        case "visit-store": {
+          const detail = ctaValueRaw;
+          return `Every caption MUST end with a CTA that drives foot traffic — invite the reader to visit in person${detail ? ` (${detail})` : ""}. Phrase it naturally — "come see us", "swing by", "we're open today", etc. Vary the wording across the 5 captions.`;
+        }
+        case "follow":
+          return "Every caption MUST end with a CTA asking the reader to follow the account for more — phrase it naturally, not desperately. \"Follow for more\", \"hit follow so you don't miss…\", \"tap follow for…\", etc. Vary the wording across the 5 captions.";
+        case "tag-friend":
+          return "Every caption MUST end with a CTA asking the reader to tag a friend. Make it specific to the post — \"tag the friend who needs this\", \"tag your brunch crew\", \"who are you bringing?\", etc. Vary the wording across the 5 captions.";
+        case "comment": {
+          const prompt = ctaValueRaw;
+          return `Every caption MUST end with a CTA inviting comments${prompt ? ` — specifically: ${prompt}` : ""}. Phrase it as a real question or prompt that begs a reply. Vary the wording across the 5 captions.`;
+        }
+        case "custom": {
+          const detail = ctaValueRaw;
+          return detail
+            ? `Every caption MUST end with a CTA following this instruction from the user: "${detail}". Apply it naturally and vary phrasing across the 5 captions.`
+            : "Every caption MUST end with a natural call-to-action that fits the post. Vary phrasing across the 5 captions.";
+        }
+        case "auto":
+        default:
+          return "Every caption MUST end with a natural call-to-action (CTA) that drives the reader back to the brand's main goal — visiting the location, ordering online, booking a table, checking out the menu, clicking the link in bio, etc. The CTA should feel organic, not salesy.";
+      }
+    })();
 
     // Caption style instructions
     const styleMap: Record<string, string> = {
@@ -1164,6 +1414,28 @@ router.post("/generate-caption", async (req, res) => {
 
     const styleInstruction = styleMap[captionStyle] || styleMap["short-sweet"];
 
+    /**
+     * Bulk batches drift into one template (e.g. every caption opening with a customer's
+     * first name). Show the model what's already been used and ban the SHAPE, not just
+     * the words — banning wording alone still yields 40 variations of one formula.
+     */
+    const recentlyUsed = (Array.isArray(avoidCaptions) ? avoidCaptions : [])
+      .filter((c): c is string => typeof c === "string" && c.trim().length > 0)
+      .slice(-12);
+    const avoidInstruction = recentlyUsed.length
+      ? `
+
+ALREADY POSTED FOR THIS BRAND — DO NOT REPEAT THESE:
+${recentlyUsed.map((c, i) => `${i + 1}. ${c.replace(/\s+/g, " ").trim().slice(0, 200)}`).join("\n")}
+
+ANTI-REPETITION RULES (critical — this is a large batch and every caption must feel freshly written):
+- Do NOT reuse the OPENING MOVE of any caption above. If several start with a customer's first name, a question, or a bold one-word sentence, you must open a different way.
+- Do NOT reuse the same STRUCTURE or rhetorical device (testimonial quote, "X said it, we're just repeating it", "name + their order", setup-then-punchline). Vary the shape, not just the nouns.
+- Do NOT recycle their distinctive phrases, jokes, or sign-offs.
+- Rotate the angle: the food itself, the craft behind it, the room, the staff, the occasion, the neighborhood, the time of day, a sensory detail. Pick one the list above hasn't leaned on.
+- Repeating a hashtag set is fine; repeating a sentence pattern is not.`
+      : "";
+
     const textPrompt = `You're the social media voice of ${brand.company}. You write like a real person — warm, fun, and relatable. Your captions make people stop scrolling, smile, and engage.
 
 BRAND:
@@ -1173,24 +1445,28 @@ BRAND:
 - Voice: ${brand.brandVoice || "Fun, warm, and conversational"}
 - Audience: ${brand.targetAudience || "General audience"}
 - Handle: ${handle || "N/A"}
+- Website: ${brand.website || "N/A"}
 
 CAPTION STYLE:
 ${styleInstruction}
+
+CALL TO ACTION:
+${ctaInstruction}
 
 YOUR JOB:
 ${media.length > 0 ? `1. Look at the attached media — what's in it? Be specific (name the dish, the vibe, the moment).
 2. Connect what you see to ${brand.company}'s personality. If it's a lasagna, don't say "delicious pasta" — say "layers of heaven that'll make your nonna jealous."
 3. Write 5 captions for ${platformName} in the style described above.` : `Write 5 captions for ${platformName} that capture ${brand.company}'s personality, using the style described above.`}
-${topic?.trim() ? `\nEXTRA CONTEXT: ${topic}` : ""}
+${topic?.trim() ? `\nCAPTION GUIDANCE (from the user — must be reflected in every caption): ${topic}` : ""}${avoidInstruction}
 
 RULES:
 - ALL 5 captions must follow the CAPTION STYLE above — this is the #1 priority
 - Sound like you're talking TO the customer, not AT them
 - Be SPECIFIC — "our hand-rolled gnocchi in sage brown butter" not "delicious food"
 - Make people want to tag a friend, comment, or visit
-- EVERY caption MUST end with a natural call-to-action (CTA) that drives the reader back to the brand's main goal — visiting the location, ordering online, booking a table, checking out the menu, clicking the link in bio, etc. The CTA should feel organic, not salesy.
+- Follow the CALL TO ACTION instructions above exactly for every caption${ctaType === "none" ? "" : " — never skip the CTA unless told to"}
 - Max ${charLimit} characters each
-- ${includeHashtags ? "End with 3-5 specific hashtags AFTER the CTA (brand name + niche tags, NOT generic ones like #food #love)" : "No hashtags"}
+- ${includeHashtags ? `End with 3-5 specific hashtags${ctaType === "none" ? "" : " AFTER the CTA"} (brand name + niche tags, NOT generic ones like #food #love)` : "No hashtags"}
 - ${includeEmojis ? "Use emojis naturally — like a real person would text" : "No emojis"}
 
 Write 5 variations — each one different but ALL in the "${captionStyle}" style.
@@ -1912,6 +2188,269 @@ Return ONLY the JSON object, no markdown.`;
   } catch (err: any) {
     console.error("Asset analysis error:", err?.message || err);
     res.status(500).json({ error: err?.message || "Failed to analyze asset." });
+  }
+});
+
+// ─── Classify References (Composer Auto Compose) ──────────
+
+router.post("/classify-references", async (req, res) => {
+  try {
+    const { references = [], brand, menuItems = [], guidance, assetLabels = [] } = req.body as {
+      references?: { base64: string; mimeType: string }[];
+      brand?: {
+        company?: string;
+        industry?: string;
+        brandVoice?: string;
+        targetAudience?: string;
+        brandColors?: string[];
+        hasLightLogo?: boolean;
+        hasDarkLogo?: boolean;
+        hasPrimaryLogo?: boolean;
+        hasSimplisticLogo?: boolean;
+      };
+      menuItems?: { name: string; category?: string; description?: string }[];
+      guidance?: string;
+      assetLabels?: string[];
+    };
+
+    if (!references.length) {
+      return res.status(400).json({ error: "At least one reference image is required." });
+    }
+    if (references.length > 8) {
+      return res.status(400).json({ error: "Maximum 8 references." });
+    }
+
+    const brandBlock = brand
+      ? `\nSELECTED BRAND
+- Company: ${brand.company || "(unspecified)"}
+- Industry: ${brand.industry || "(unspecified)"}
+- Voice: ${brand.brandVoice || "(unspecified)"}
+- Audience: ${brand.targetAudience || "(unspecified)"}
+- Brand colors: ${(brand.brandColors || []).join(", ") || "(none)"}
+- Logo variants saved: ${[
+          brand.hasPrimaryLogo ? "primary" : null,
+          brand.hasLightLogo ? "light" : null,
+          brand.hasDarkLogo ? "dark" : null,
+          brand.hasSimplisticLogo ? "simplistic" : null,
+        ].filter(Boolean).join(", ") || "none"}\n`
+      : "";
+
+    const menuBlock = menuItems.length
+      ? `\nMENU ITEMS (use to detect if a dropped dish matches a menu item):\n${menuItems
+          .slice(0, 80)
+          .map((m) => `- ${m.name}${m.category ? ` (${m.category})` : ""}${m.description ? `: ${m.description}` : ""}`)
+          .join("\n")}\n`
+      : "";
+
+    const guidanceBlock = guidance && guidance.trim()
+      ? `\nUSER GUIDANCE (the user typed this to steer the post — weight it heavily when interpreting the subject, choosing/inventing the title, picking the format, and setting the overall direction): "${guidance.trim()}"\n`
+      : "";
+
+    // The user can rename a reference (e.g. "logoSimple", "fontstyle"). A
+    // non-default name is a strong, explicit signal of that asset's role/intent.
+    const meaningfulLabels = (assetLabels || [])
+      .map((l, i) => ({ i, l: (l || "").trim() }))
+      .filter((x) => x.l && !/^img\d+$/i.test(x.l));
+    const labelsBlock = meaningfulLabels.length
+      ? `\nUSER-APPLIED LABELS (the user named these images themselves — a non-default name like "logo", "logoSimple", "fontstyle", "font", "background", "bg" is a STRONG hint about that image's role and intent; honor it unless the image clearly contradicts it). In particular, a name like "fontstyle"/"font" means role="fontstyle", "logo"/"logoSimple" means role="logo", and "background"/"bg" means role="background":\n${meaningfulLabels
+          .map((x) => `- image ${x.i}: "${x.l}"`)
+          .join("\n")}\n`
+      : "";
+
+    const instruction = `You are the brain of a social-media composer for a brand-design agency. Reason carefully about the dropped reference images and the selected brand, then return a structured plan.
+
+THE TWO PATHS — pick exactly one as the "intent":
+
+1. "recreate" — The dropped assets already belong to the selected brand. They contain the brand's logo, brand name, brand-specific copy, or are clearly previous content for this brand. The user wants to refresh/recreate similar on-brand material. Preserve titles and brand markers.
+
+2. "create_from_inspiration" — The dropped assets are MIXED: typically one "inspiration" image from somewhere else (Pinterest, a competitor, a stock template) plus the user's own subject(s) (a dish, a product). The inspiration is NOT for the selected brand. The user wants to apply the look-and-feel of the inspiration to their own subject and brand. Replace the inspiration's subject with the user's subject; replace the inspiration's logo with the user's brand logo; rewrite copy in the brand's voice (unless the inspiration's title text fits well, in which case keep it).
+
+Decide which path it is by looking at whether the inspiration-style image contains the SELECTED brand's name/logo/handle/copy. If yes → recreate. If a different brand is shown or no brand markers → create_from_inspiration.
+
+ASSET ROLES (one per image):
+- "inspiration": A finished composed graphic with typography or styled composition (the look-and-feel reference). Usually 0 or 1.
+- "dish": A photo of a finished food/drink plate — the hero subject.
+- "logo": A brand logo / mark / wordmark.
+- "fontstyle": A photo, screenshot, sign, or sample of LETTERING or a typeface — the user is showing the FONT / lettering STYLE they want the headline and display text rendered in. It is a type-style reference ONLY: NOT a logo, NOT the subject, NOT a finished graphic, NOT a background. Signals: it's mostly just letters/words shown for their style, often handwritten/script/neon/sign lettering, and the user often labels it "fontstyle" or "font".
+- "product": A non-food product shot (the hero subject for non-food brands).
+- "background": A backdrop image the user wants to build the design ON — mostly empty surface, texture, scene, or environment with little or no main subject and no headline text (e.g. a marble or wood table, a wall, fabric, a plate or surface, an interior/exterior scene, the sky, an abstract gradient or texture). It may carry minor props or decorative elements, but its job is to sit BEHIND the subject and copy. If the user dropped a near-empty surface/scene image, classify it as "background" — they provided it because they want it used as the background.
+- "other": Anything that doesn't fit.
+
+DESIGN PHILOSOPHY YOU MUST APPLY:
+
+• Aspect ratio default: "4:5" (Instagram post). Only deviate to "9:16" if the inspiration is clearly a story/reel, "1:1" if clearly a square post, or "16:9" if a wide YouTube/landscape banner.
+
+• Logo variant: Look at the planned composition's likely background brightness. If the inspiration is dark/moody (dark background, low-key lighting), use the LIGHT logo. If bright/airy/white background, use the DARK logo. Prefer the "simplistic" variant — the minimalist mark on its own (icon/symbol only, no wordmark, like Apple using just the apple) — when the composition is clean, minimalist, or editorial, or when a bold uncluttered statement reads better than the full lockup; but choose "simplistic" ONLY if it appears in the "Logo variants saved" list above. Pick "light", "dark", "primary", or "simplistic" — pick "none" only if no logos exist.
+
+• Subject grouping: If the user dropped 2+ dishes (or 2+ products), treat them as ONE combined subject group — they want all of them featured in the composition, not one swapped for the other. Set type="multi" and list their indices. If only one subject → "single". If only a background and nothing else → "background_as_subject". If nothing subject-like → "none".
+
+• Title:
+  - intent=recreate: title_strategy="preserve" — the existing brand title/copy should remain. If you can read an extracted_title in the inspiration, return it. If the inspiration's "title" is actually just the brand name repeated, do NOT preserve that — switch title_strategy to "invent" and write a real headline instead.
+  - intent=create_from_inspiration: title_strategy="invent" — suggest a short punchy title (3–6 words, ALL CAPS friendly) that fits the brand voice and the subject. If a menu item is detected, weave it in. Return as suggested_title.
+  - HARD RULE: suggested_title must NEVER be the brand name, the brand tagline, or any wording that appears in the brand's logo (e.g. for "Salvatori's Authentic Italian Eatery", never suggest "SALVATORI'S", "AUTHENTIC ITALIAN EATERY", or "SALVATORI'S ITALIAN EATERY"). The logo already carries that. Suggest a headline, a dish name, a hook, or a promotional line — never a restatement of the wordmark.
+
+• Text capture (CRITICAL for recreate): Read EVERY piece of legible text in each composed/inspiration image and return it in "extracted_text" as an array of the exact strings — headline, subheadings, body copy, prices, dates, taglines, labels, and any CTA — each as its own string, in reading order, spelled EXACTLY as shown. For intent=recreate this is essential: the recreation must reproduce ALL of the brand's existing copy, not just the title. Use [] only if there is truly no text.
+
+• Call to Action (REQUIRED): Every social graphic needs a CTA — that's what makes it drive business, not just decorate a feed. Return suggested_cta as a short button-style phrase (2–5 words, action verb, often imperative). Match it to the industry and the subject:
+  - Restaurants / food: "Order Today", "Dine In Tonight", "Order Online", "Book a Table", "Try It Today", "Available Now"
+  - Towing / repair / auto: "Call 24/7", "Get a Quote", "Service Today", "Tow Now"
+  - Retail / e-commerce: "Shop Now", "Limited Stock", "Get Yours", "Order Today"
+  - Services (med spa, fitness, etc.): "Book Now", "Reserve Your Spot", "Get Started", "Claim Your Spot"
+  - Promo/event: "Don't Miss Out", "Ends Sunday", "This Week Only"
+  - If the inspiration shows a specific CTA and intent=recreate, preserve it instead of inventing.
+  - Default fallback when unsure: an industry-appropriate "Order Today" / "Book Now" / "Call Today" style line — never leave it empty.
+
+• Menu match: If a "dish" asset clearly matches one of the MENU ITEMS provided, return the exact menu item name in menu_match for that asset.
+
+• Inspiration format (for the inspiration asset, if any): Pick the format that best describes what the inspiration is doing. This drives whether the recreation needs special handling:
+  - "standard_promo": Typical headline + dish + CTA promo graphic.
+  - "engagement_quiz": Quiz, trivia, fill-in-the-blank, "guess the dish", word puzzle. The hook is to make the viewer participate.
+  - "engagement_question": Asks the audience a direct question ("Which one would you pick?", "Comment your favorite").
+  - "before_after": Comparison / transformation layout.
+  - "recipe_steps": Numbered or step-by-step recipe layout.
+  - "testimonial": Review or quote in large pull-text.
+  - "announcement": Opening / new menu item / event / hours.
+  - "menu_showcase": Multiple items shown grid- or list-style.
+  - "other"
+
+• Engagement mechanic (only when format starts with "engagement_"): Describe in one sentence the EXACT interactive device used (e.g. "fill-in-the-blank with one letter shown per box, dashes for the rest, equal to letter count of the dish name"; "multiple-choice with 3 options below a question"; "this-or-that with two dishes side by side"). This must be specific enough that another designer could recreate the mechanic without seeing the inspiration. Otherwise null.${brandBlock}${menuBlock}${guidanceBlock}${labelsBlock}
+
+RETURN STRICT JSON, no markdown:
+{
+  "intent": "recreate" | "create_from_inspiration",
+  "intent_reason": "one sentence explaining the call",
+  "recommended_aspect_ratio": "4:5" | "1:1" | "9:16" | "16:9",
+  "recommended_logo_variant": "light" | "dark" | "primary" | "simplistic" | "none",
+  "logo_variant_reason": "one short sentence about why",
+  "assets": [
+    {
+      "index": 0,
+      "role": "inspiration" | "dish" | "logo" | "fontstyle" | "product" | "background" | "other",
+      "description": "short description",
+      "confidence": 0.0-1.0,
+      "is_on_brand": true | false,
+      "extracted_title": "optional — exact title text if visible on an inspiration",
+      "extracted_text": ["EVERY exact text string visible in the image, in reading order — [] if none. Be thorough for intent=recreate."],
+      "menu_match": "optional — exact menu item name if dish matches one"
+    }
+  ],
+  "subject_grouping": {
+    "type": "single" | "multi" | "background_as_subject" | "none",
+    "subject_indices": [1, 2]
+  },
+  "title_strategy": "preserve" | "invent",
+  "suggested_title": "optional — only when title_strategy=invent",
+  "suggested_cta": "REQUIRED — short button-style CTA (2–5 words)",
+  "inspiration_format": "standard_promo" | "engagement_quiz" | "engagement_question" | "before_after" | "recipe_steps" | "testimonial" | "announcement" | "menu_showcase" | "other",
+  "engagement_mechanic": "optional — one specific sentence describing the interactive device, only for engagement_* formats",
+  "overall_summary": "one sentence describing the user's likely goal"
+}`;
+
+    const parts: any[] = [{ text: instruction }];
+    references.forEach((ref, i) => {
+      parts.push({ text: `--- Image index ${i} ---` });
+      parts.push({ inlineData: { data: ref.base64, mimeType: ref.mimeType } });
+    });
+    parts.push({
+      text: `Now produce the plan for these ${references.length} image${references.length > 1 ? "s" : ""}.`,
+    });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-pro",
+      contents: [{ role: "user", parts }],
+      config: {
+        thinkingConfig: { thinkingBudget: -1, includeThoughts: false },
+        responseMimeType: "application/json",
+      },
+    });
+
+    const text = response.text ?? "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return res.status(422).json({ error: "Classifier returned no JSON." });
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonMatch[0]);
+    } catch {
+      return res.status(422).json({ error: "Classifier returned invalid JSON." });
+    }
+
+    const validRoles = ["inspiration", "dish", "logo", "fontstyle", "product", "background", "other"];
+    const validRatios = ["4:5", "1:1", "9:16", "16:9", "5:4", "3:4", "4:3", "2:3", "3:2"];
+    const validVariants = ["light", "dark", "primary", "simplistic", "none"];
+    const validIntents = ["recreate", "create_from_inspiration"];
+    const validGroupings = ["single", "multi", "background_as_subject", "none"];
+    const validStrategies = ["preserve", "invent"];
+
+    const assets = Array.isArray(parsed.assets)
+      ? parsed.assets.map((a: any) => ({
+          index: typeof a.index === "number" ? a.index : 0,
+          role: validRoles.includes(a.role) ? a.role : "other",
+          description: String(a.description ?? ""),
+          confidence: typeof a.confidence === "number" ? a.confidence : 0.5,
+          is_on_brand: !!a.is_on_brand,
+          extracted_title: a.extracted_title ? String(a.extracted_title) : null,
+          extracted_text: Array.isArray(a.extracted_text)
+            ? a.extracted_text.map((t: any) => String(t)).filter((t: string) => t.trim()).slice(0, 40)
+            : [],
+          menu_match: a.menu_match ? String(a.menu_match) : null,
+        }))
+      : [];
+
+    const subjectGrouping = parsed.subject_grouping || {};
+
+    res.json({
+      intent: validIntents.includes(parsed.intent) ? parsed.intent : "create_from_inspiration",
+      intent_reason: String(parsed.intent_reason ?? ""),
+      recommended_aspect_ratio: validRatios.includes(parsed.recommended_aspect_ratio)
+        ? parsed.recommended_aspect_ratio
+        : "4:5",
+      recommended_logo_variant: validVariants.includes(parsed.recommended_logo_variant)
+        ? parsed.recommended_logo_variant
+        : "none",
+      logo_variant_reason: String(parsed.logo_variant_reason ?? ""),
+      assets,
+      subject_grouping: {
+        type: validGroupings.includes(subjectGrouping.type) ? subjectGrouping.type : "none",
+        subject_indices: Array.isArray(subjectGrouping.subject_indices)
+          ? subjectGrouping.subject_indices.filter((i: any) => typeof i === "number")
+          : [],
+      },
+      title_strategy: validStrategies.includes(parsed.title_strategy) ? parsed.title_strategy : "invent",
+      suggested_title: parsed.suggested_title ? String(parsed.suggested_title) : null,
+      suggested_cta: parsed.suggested_cta ? String(parsed.suggested_cta) : null,
+      inspiration_format: [
+        "standard_promo",
+        "engagement_quiz",
+        "engagement_question",
+        "before_after",
+        "recipe_steps",
+        "testimonial",
+        "announcement",
+        "menu_showcase",
+        "other",
+      ].includes(parsed.inspiration_format)
+        ? parsed.inspiration_format
+        : "standard_promo",
+      engagement_mechanic: parsed.engagement_mechanic ? String(parsed.engagement_mechanic) : null,
+      summary: String(parsed.overall_summary ?? ""),
+    });
+  } catch (err: any) {
+    console.error("classify-references error:", err?.message || err);
+    let userMessage = "Failed to classify references.";
+    let statusCode = 500;
+    if (err?.status && typeof err.status === "number") statusCode = err.status;
+    if (err?.message) {
+      try {
+        const parsed = JSON.parse(err.message);
+        userMessage = parsed?.error?.message || err.message;
+      } catch {
+        userMessage = err.message;
+      }
+    }
+    res.status(statusCode).json({ error: userMessage });
   }
 });
 

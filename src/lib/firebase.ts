@@ -49,4 +49,16 @@ export const COLLECTIONS = {
   territoryState: "territory_state",
   teamMembers: "team_members",
   scheduleHandoffs: "schedule_handoffs",
+  // Creative Writer (book-writing studio)
+  books: "books",
+  bookChapters: "book_chapters",
+  bookDrafts: "book_drafts",
+  bookCharacters: "book_characters",
+  bookLore: "book_lore",
+  bookPlotThreads: "book_plot_threads",
+  bookScenes: "book_scenes",
+  creativeSessions: "creative_sessions",
+  nexusReports: "nexus_reports",
+  nexusProposals: "nexus_proposals",
+  craftPlans: "craft_plans",
 } as const;

@@ -23,6 +23,18 @@ const RATIOS = [
   { id: '16:9', label: '16:9', sub: 'Wide / YT' },
 ];
 
+const OPENAI_RESOLUTIONS = [
+  { id: '1K', label: '1K', sub: '~1.5K edge' },
+  { id: '2K', label: '2K', sub: '~2K edge' },
+  { id: '4K', label: '4K', sub: 'Up to 3840' },
+];
+
+const OPENAI_QUALITIES = [
+  { id: 'low', label: 'Low', sub: 'Fast, cheap' },
+  { id: 'medium', label: 'Medium', sub: 'Balanced' },
+  { id: 'high', label: 'High', sub: 'Best detail' },
+];
+
 interface RefImage {
   base64: string;
   mimeType: string;
@@ -42,6 +54,8 @@ export default function Resizer() {
   const [refImage, setRefImage] = usePersistedState<RefImage | null>('resizer.refImage', null);
   const [model, setModel] = usePersistedState<string>('resizer.model', 'gemini-3-pro-image-preview');
   const [ratio, setRatio] = usePersistedState<string>('resizer.ratio', '1:1');
+  const [resolution, setResolution] = usePersistedState<string>('resizer.resolution', '2K');
+  const [quality, setQuality] = usePersistedState<string>('resizer.quality', 'high');
   const [count, setCount] = usePersistedState<number>('resizer.count', 1);
   const [dragOver, setDragOver] = useState(false);
 
@@ -127,6 +141,7 @@ export default function Resizer() {
       mode: 'resize',
       model,
       aspectRatio: ratio,
+      ...(model === 'gpt-image-2' ? { resolution, quality } : {}),
       referenceImage: { base64: refImage.base64, mimeType: refImage.mimeType },
     };
 
@@ -276,7 +291,7 @@ export default function Resizer() {
                             alt=""
                             className="w-full h-auto block"
                           />
-                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                          <div className="hover-scrim absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                             <button
                               onClick={() => downloadAsset(asset)}
                               className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
@@ -385,6 +400,53 @@ export default function Resizer() {
                 </div>
               )}
             </div>
+
+            {model === 'gpt-image-2' && (
+              <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5 space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">Resolution</h3>
+                    <p className="text-[9px] text-zinc-600">OpenAI only</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {OPENAI_RESOLUTIONS.map((r) => (
+                      <button
+                        key={r.id}
+                        onClick={() => setResolution(r.id)}
+                        className={`px-2 py-2 rounded-lg border text-center transition-all ${
+                          resolution === r.id ? 'bg-purple-500/10 border-purple-500/30' : 'border-[#27273A] bg-[#0A0A0F] hover:border-zinc-600'
+                        }`}
+                      >
+                        <p className={`text-[11px] font-semibold ${resolution === r.id ? 'text-purple-300' : 'text-zinc-300'}`}>{r.label}</p>
+                        <p className="text-[8px] text-zinc-500 mt-0.5 leading-tight">{r.sub}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Quality</h3>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {OPENAI_QUALITIES.map((q) => (
+                      <button
+                        key={q.id}
+                        onClick={() => setQuality(q.id)}
+                        className={`px-2 py-2 rounded-lg border text-center transition-all ${
+                          quality === q.id ? 'bg-purple-500/10 border-purple-500/30' : 'border-[#27273A] bg-[#0A0A0F] hover:border-zinc-600'
+                        }`}
+                      >
+                        <p className={`text-[11px] font-semibold ${quality === q.id ? 'text-purple-300' : 'text-zinc-300'}`}>{q.label}</p>
+                        <p className="text-[8px] text-zinc-500 mt-0.5 leading-tight">{q.sub}</p>
+                      </button>
+                    ))}
+                  </div>
+                  {resolution === '4K' && (
+                    <p className="text-[10px] text-amber-400/80 mt-2">
+                      4K is "experimental" per OpenAI. Only 16:9 / 9:16 reach full 3840 — other ratios scale to fit the 8.3M-pixel budget.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="sticky bottom-0 bg-[#12121A] border border-[#27273A] rounded-2xl p-5 space-y-3">
               <div className="flex items-center justify-between">

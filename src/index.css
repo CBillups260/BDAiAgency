@@ -64,3 +64,39 @@ body {
 .snap-x-tabs > * {
   scroll-snap-align: start;
 }
+
+/* ── Touch-device affordances ─────────────────────────────────────────────
+   Controls that only fade in on :hover (card delete buttons, image action
+   overlays) are unreachable on a touch screen — there is no hover state to
+   enter. On coarse pointers, show them outright. */
+@media (hover: none) {
+  .group-hover\:opacity-100 {
+    opacity: 1;
+  }
+
+  /* Full-cover scrims exist to make hover-revealed buttons legible. Always-on
+     they would grey out every thumbnail, so on touch trade the flat tint for a
+     bottom gradient and drop the buttons onto it — the image stays readable. */
+  .hover-scrim {
+    background: linear-gradient(
+      to top,
+      rgba(0, 0, 0, 0.78) 0%,
+      rgba(0, 0, 0, 0.45) 32%,
+      transparent 68%
+    );
+    align-items: flex-end;
+    padding-bottom: 0.5rem;
+  }
+}
+
+/* Dense option chips are ~30px tall, which is a small target for a fingertip.
+   Give every in-flow control a comfortable minimum on touch devices. Overlay
+   badges (Tailwind's `absolute`) keep their exact size — they are icon dots
+   pinned to a thumbnail corner, and stretching them would look broken. */
+@media (hover: none) {
+  button:not(.absolute):not(.tap-exempt),
+  [role="button"]:not(.absolute):not(.tap-exempt),
+  select:not(.tap-exempt) {
+    min-height: 36px;
+  }
+}

@@ -28,6 +28,9 @@ export interface TeamMember {
   lastSeenAt?: unknown;
 }
 
+export type HandoffProcessingMode = "manual" | "ai_auto";
+export type HandoffAiStatus = "pending" | "processing" | "ready_for_approval" | "failed";
+
 export interface ScheduleHandoff {
   id: string;
   assigneeUid: string;
@@ -43,6 +46,23 @@ export interface ScheduleHandoff {
   createdByUid: string;
   createdByName: string;
   createdByEmail: string | null;
+  /** Where the handoff originated, for analytics & UI badges (e.g. "composer", "asset_creator", "tasks"). */
+  source?: string | null;
+  /** "manual" = human-in-loop review; "ai_auto" = AI pre-fills caption + suggested time, human approves. */
+  processingMode?: HandoffProcessingMode;
+  aiProcessingStatus?: HandoffAiStatus | null;
+  aiProcessingError?: string | null;
+  aiSuggestedCaption?: string | null;
+  /** ISO datetime; loaded into the scheduler as the proposed publish time. */
+  aiSuggestedScheduleAt?: string | null;
+  aiSuggestReason?: string | null;
+  /** Menu item this image was matched to during bulk analysis (null = best-guess, no match). */
+  menuMatch?: string | null;
+  /** Groups all handoffs created in one bulk upload run. */
+  batchId?: string | null;
+  /** For images posted multiple times across the window: 1-based occurrence (e.g. "1 of 2"). */
+  occurrenceIndex?: number | null;
+  occurrenceCount?: number | null;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -322,6 +342,218 @@ export async function createScheduleHandoff(input: {
     createdByUid: creator.uid,
     createdByName: creator.displayName || creator.email || "Someone",
     createdByEmail: creator.email ?? null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  return handoffId;
+}
+
+/**
+ * Create a handoff straight from in-memory image bytes (base64) — used by Composer / AssetCreator
+ * where the generated image never touches the user's filesystem.
+ */
+export async function createScheduleHandoffFromBase64(input: {
+  creator: User;
+  assignee: TeamMember;
+  clientAccount: { id: string; name: string };
+  base64: string;
+  mimeType: string;
+  captionHint: string;
+  source?: string;
+  processingMode?: HandoffProcessingMode;
+}): Promise<string> {
+  const {
+    creator,
+    assignee,
+    clientAccount,
+    base64,
+    mimeType,
+    captionHint,
+    source,
+    processingMode = "manual",
+  } = input;
+  if (!clientAccount.id.trim()) {
+    throw new Error("Choose which client account this post is for.");
+  }
+  if (!base64) {
+    throw new Error("No image data to send.");
+  }
+  const mime = mimeType?.startsWith("image/") ? mimeType : "image/png";
+
+  const draftRef = doc(collection(firestore, COLLECTIONS.scheduleHandoffs));
+  const handoffId = draftRef.id;
+
+  // base64 → Blob without a roundtrip through File
+  const byteString = atob(base64);
+  const bytes = new Uint8Array(byteString.length);
+  for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
+  const blob = new Blob([bytes], { type: mime });
+
+  const ext = mime.split("/")[1]?.split("+")[0] || "png";
+  const path = `${COLLECTIONS.scheduleHandoffs}/${handoffId}/post.${ext}`;
+  const storageRef = ref(storage, path);
+  await uploadBytes(storageRef, blob, { contentType: mime });
+  const imageUrl = await getDownloadURL(storageRef);
+
+  await setDoc(draftRef, {
+    assigneeUid: assignee.uid,
+    assigneeName: assignee.displayName || assignee.email || "Team member",
+    assigneeEmail: assignee.email ?? null,
+    clientAccountId: clientAccount.id,
+    clientAccountName: clientAccount.name,
+    imageUrl,
+    imageStoragePath: path,
+    captionHint: captionHint.trim() || null,
+    status: "pending" as const,
+    createdByUid: creator.uid,
+    createdByName: creator.displayName || creator.email || "Someone",
+    createdByEmail: creator.email ?? null,
+    source: source ?? null,
+    processingMode,
+    aiProcessingStatus: processingMode === "ai_auto" ? "processing" : null,
+    aiProcessingError: null,
+    aiSuggestedCaption: null,
+    aiSuggestedScheduleAt: null,
+    aiSuggestReason: null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  return handoffId;
+}
+
+/** Update AI fields on an existing handoff after caption/time generation completes. */
+export async function updateHandoffAiResult(
+  handoffId: string,
+  result: {
+    aiProcessingStatus: HandoffAiStatus;
+    aiProcessingError?: string | null;
+    aiSuggestedCaption?: string | null;
+    aiSuggestedScheduleAt?: string | null;
+    aiSuggestReason?: string | null;
+  }
+) {
+  const patch: Record<string, unknown> = {
+    aiProcessingStatus: result.aiProcessingStatus,
+    updatedAt: serverTimestamp(),
+  };
+  if (result.aiProcessingError !== undefined) patch.aiProcessingError = result.aiProcessingError;
+  if (result.aiSuggestedCaption !== undefined) patch.aiSuggestedCaption = result.aiSuggestedCaption;
+  if (result.aiSuggestedScheduleAt !== undefined) patch.aiSuggestedScheduleAt = result.aiSuggestedScheduleAt;
+  if (result.aiSuggestReason !== undefined) patch.aiSuggestReason = result.aiSuggestReason;
+  // If the AI produced a caption, also surface it as the captionHint so legacy UI still shows something useful.
+  if (result.aiSuggestedCaption !== undefined && result.aiSuggestedCaption !== null) {
+    patch.captionHint = result.aiSuggestedCaption;
+  }
+  await updateDoc(doc(firestore, COLLECTIONS.scheduleHandoffs, handoffId), patch);
+}
+
+/**
+ * Upload one bulk-batch image to Storage and return its URL + path.
+ * When `toSecondBrain` is true the image lives in the account's media library (so the
+ * created handoffs reference it without owning its cleanup); otherwise it goes to a
+ * batch-scoped scheduler path.
+ */
+export async function uploadBulkImage(input: {
+  accountId: string;
+  base64: string;
+  mimeType: string;
+  toSecondBrain: boolean;
+  batchId: string;
+  imageId: string;
+}): Promise<{ imageUrl: string; storagePath: string }> {
+  const { accountId, base64, mimeType, toSecondBrain, batchId, imageId } = input;
+  if (!base64) throw new Error("No image data to upload.");
+  const mime = mimeType?.startsWith("image/") ? mimeType : "image/png";
+  const ext = mime.split("/")[1]?.split("+")[0] || "png";
+
+  const byteString = atob(base64);
+  const bytes = new Uint8Array(byteString.length);
+  for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
+  const blob = new Blob([bytes], { type: mime });
+
+  const path = toSecondBrain
+    ? `${COLLECTIONS.mediaAssets}/${accountId}/${imageId}.${ext}`
+    : `${COLLECTIONS.scheduleHandoffs}/_bulk/${batchId}/${imageId}.${ext}`;
+  const storageRef = ref(storage, path);
+  await uploadBytes(storageRef, blob, { contentType: mime });
+  const imageUrl = await getDownloadURL(storageRef);
+  return { imageUrl, storagePath: path };
+}
+
+/**
+ * Create one AI-prefilled handoff from an already-uploaded image (no re-upload). Used by the
+ * bulk uploader: an image can spawn several handoffs (one per scheduled occurrence), all
+ * sharing the same uploaded file. The doc lands in the AI Scheduler approval queue already
+ * marked `ready_for_approval` with caption + suggested time filled in.
+ */
+export async function createAiBulkHandoff(input: {
+  creator: User;
+  assignee: TeamMember;
+  clientAccount: { id: string; name: string };
+  imageUrl: string;
+  /** Storage path this handoff owns for cleanup. Omit/null when the image is shared (Second Brain / multiple occurrences). */
+  imageStoragePath?: string | null;
+  caption: string;
+  scheduleAtIso: string | null;
+  scheduleReason?: string | null;
+  menuMatch?: string | null;
+  source?: string;
+  batchId?: string | null;
+  occurrenceIndex?: number | null;
+  occurrenceCount?: number | null;
+}): Promise<string> {
+  const {
+    creator,
+    assignee,
+    clientAccount,
+    imageUrl,
+    imageStoragePath = null,
+    caption,
+    scheduleAtIso,
+    scheduleReason = null,
+    menuMatch = null,
+    source = "bulk_ai",
+    batchId = null,
+    occurrenceIndex = null,
+    occurrenceCount = null,
+  } = input;
+  if (!clientAccount.id.trim()) {
+    throw new Error("Choose which client account this post is for.");
+  }
+  if (!imageUrl) {
+    throw new Error("No image to schedule.");
+  }
+  const trimmedCaption = caption.trim();
+
+  const draftRef = doc(collection(firestore, COLLECTIONS.scheduleHandoffs));
+  const handoffId = draftRef.id;
+
+  await setDoc(draftRef, {
+    assigneeUid: assignee.uid,
+    assigneeName: assignee.displayName || assignee.email || "Team member",
+    assigneeEmail: assignee.email ?? null,
+    clientAccountId: clientAccount.id,
+    clientAccountName: clientAccount.name,
+    imageUrl,
+    imageStoragePath,
+    captionHint: trimmedCaption || null,
+    status: "pending" as const,
+    createdByUid: creator.uid,
+    createdByName: creator.displayName || creator.email || "Someone",
+    createdByEmail: creator.email ?? null,
+    source,
+    processingMode: "ai_auto" as const,
+    aiProcessingStatus: trimmedCaption ? ("ready_for_approval" as const) : ("failed" as const),
+    aiProcessingError: null,
+    aiSuggestedCaption: trimmedCaption || null,
+    aiSuggestedScheduleAt: scheduleAtIso ?? null,
+    aiSuggestReason: scheduleReason,
+    menuMatch,
+    batchId,
+    occurrenceIndex,
+    occurrenceCount,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });

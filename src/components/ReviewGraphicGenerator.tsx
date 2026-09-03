@@ -191,6 +191,22 @@ function PlatformBubbleIcon({ platform, size = 48 }: { platform: string; size?: 
 const BUCKET_KEY = 'bdai-review-bucket';
 const REVIEW_CACHE_PREFIX = 'bdai-reviews-';
 
+// Sort order for Google (SerpAPI) reviews.
+type ReviewSort = 'relevant' | 'recent';
+
+// Maps our sort options to SerpAPI `sort_by` tokens. 'relevant' omits the param
+// (SerpAPI's default is qualityScore = most relevant); 'recent' = newest first.
+const REVIEW_SORT_PARAM: Record<ReviewSort, string | undefined> = {
+  relevant: undefined,
+  recent: 'newestFirst',
+};
+
+// Cache key is sort-aware so each order caches independently. 'relevant' keeps the
+// legacy (no-suffix) key so previously cached reviews stay valid.
+function reviewCacheKey(placeId: string, sort: ReviewSort): string {
+  return REVIEW_CACHE_PREFIX + placeId + (sort === 'relevant' ? '' : `:${sort}`);
+}
+
 interface BucketItem {
   id: string;
   timestamp: number;
@@ -216,15 +232,15 @@ function saveBucket(items: BucketItem[]) {
   localStorage.setItem(BUCKET_KEY, JSON.stringify(items.slice(0, 20)));
 }
 
-function cacheReviews(placeId: string, reviews: FetchedReview[], nextPageToken?: string | null) {
+function cacheReviews(placeId: string, sort: ReviewSort, reviews: FetchedReview[], nextPageToken?: string | null) {
   try {
-    localStorage.setItem(REVIEW_CACHE_PREFIX + placeId, JSON.stringify({ ts: Date.now(), reviews, nextPageToken: nextPageToken || null }));
+    localStorage.setItem(reviewCacheKey(placeId, sort), JSON.stringify({ ts: Date.now(), reviews, nextPageToken: nextPageToken || null }));
   } catch {}
 }
 
-function getCachedReviews(placeId: string): { reviews: FetchedReview[]; ts: number; nextPageToken: string | null } | null {
+function getCachedReviews(placeId: string, sort: ReviewSort): { reviews: FetchedReview[]; ts: number; nextPageToken: string | null } | null {
   try {
-    const raw = localStorage.getItem(REVIEW_CACHE_PREFIX + placeId);
+    const raw = localStorage.getItem(reviewCacheKey(placeId, sort));
     if (!raw) return null;
     const { ts, reviews, nextPageToken } = JSON.parse(raw);
     // Cache valid for 1 year
@@ -956,6 +972,7 @@ export default function ReviewGraphicGenerator() {
   const [reviewsCached, setReviewsCached] = useState(false);
   const [cacheDate, setCacheDate] = useState<number | null>(null);
   const [photosOnly, setPhotosOnly] = usePersistedState<boolean>('review.photosOnly', false);
+  const [reviewSort, setReviewSort] = usePersistedState<ReviewSort>('review.sort', 'relevant');
   const [hasMoreReviews, setHasMoreReviews] = useState(false);
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
   const [bundledCaptions, setBundledCaptions] = usePersistedState<string[]>('review.bundledCaptions', []);
@@ -1068,7 +1085,8 @@ export default function ReviewGraphicGenerator() {
     }
   }, [searchQuery]);
 
-  const fetchReviews = useCallback(async (place: PlaceResult, skipCache = false) => {
+  const fetchReviews = useCallback(async (place: PlaceResult, skipCache = false, sortOverride?: ReviewSort) => {
+    const activeSort = sortOverride ?? reviewSort;
     setSelectedPlace(place);
     // Auto-set the Google business photo as background
     if (place.photoUrl) {
@@ -1076,7 +1094,7 @@ export default function ReviewGraphicGenerator() {
     }
     // Try cache first
     if (!skipCache) {
-      const cached = getCachedReviews(place.id);
+      const cached = getCachedReviews(place.id, activeSort);
       if (cached) {
         setFetchedReviews(cached.reviews);
         setReviewsCached(true);
@@ -1103,7 +1121,7 @@ export default function ReviewGraphicGenerator() {
       const res = await authedFetch('/api/content/place-reviews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ placeId: place.id }),
+        body: JSON.stringify({ placeId: place.id, sort: REVIEW_SORT_PARAM[activeSort] }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -1113,13 +1131,13 @@ export default function ReviewGraphicGenerator() {
       setNextPageToken(data.nextPageToken || null);
       setReviewsCached(true);
       setCacheDate(Date.now());
-      cacheReviews(place.id, reviews, data.nextPageToken || null);
+      cacheReviews(place.id, activeSort, reviews, data.nextPageToken || null);
     } catch (e: any) {
       setSearchError(e.message);
     } finally {
       setFetchingReviews(false);
     }
-  }, []);
+  }, [reviewSort]);
 
   const loadMoreReviews = useCallback(async () => {
     if (!selectedPlace || loadingMore || !hasMoreReviews) return;
@@ -1132,7 +1150,7 @@ export default function ReviewGraphicGenerator() {
         const firstRes = await authedFetch('/api/content/place-reviews', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ placeId: selectedPlace.id }),
+          body: JSON.stringify({ placeId: selectedPlace.id, sort: REVIEW_SORT_PARAM[reviewSort] }),
         });
         const firstData = await firstRes.json();
         token = firstData.nextPageToken || null;
@@ -1146,7 +1164,7 @@ export default function ReviewGraphicGenerator() {
       const res = await authedFetch('/api/content/place-reviews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ placeId: selectedPlace.id, nextPageToken: token }),
+        body: JSON.stringify({ placeId: selectedPlace.id, nextPageToken: token, sort: REVIEW_SORT_PARAM[reviewSort] }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -1158,13 +1176,13 @@ export default function ReviewGraphicGenerator() {
       setFetchedReviews(merged);
       setHasMoreReviews(!!data.hasMore);
       setNextPageToken(data.nextPageToken || null);
-      cacheReviews(selectedPlace.id, merged, data.nextPageToken || null);
+      cacheReviews(selectedPlace.id, reviewSort, merged, data.nextPageToken || null);
     } catch (e: any) {
       setSearchError(e.message);
     } finally {
       setLoadingMore(false);
     }
-  }, [selectedPlace, loadingMore, hasMoreReviews, nextPageToken, fetchedReviews]);
+  }, [selectedPlace, loadingMore, hasMoreReviews, nextPageToken, fetchedReviews, reviewSort]);
 
   const selectFetchedReview = (r: FetchedReview) => {
     setReview({
@@ -1214,7 +1232,7 @@ export default function ReviewGraphicGenerator() {
     if (item.placeId) {
       setSelectedPlace({ id: item.placeId, name: item.placeName || '', address: '' });
       setReviewSource('google');
-      const cached = getCachedReviews(item.placeId);
+      const cached = getCachedReviews(item.placeId, reviewSort);
       if (cached) {
         setFetchedReviews(cached.reviews);
         setReviewsCached(true);
@@ -1222,7 +1240,7 @@ export default function ReviewGraphicGenerator() {
       }
     }
     setError(null);
-  }, []);
+  }, [reviewSort]);
 
   const removeFromBucket = useCallback((id: string) => {
     const updated = bucket.filter(b => b.id !== id);
@@ -1793,7 +1811,7 @@ export default function ReviewGraphicGenerator() {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  localStorage.removeItem(REVIEW_CACHE_PREFIX + selectedPlace.id);
+                                  localStorage.removeItem(reviewCacheKey(selectedPlace.id, reviewSort));
                                   setReviewsCached(false);
                                   setCacheDate(null);
                                   fetchReviews({ ...selectedPlace, photoUrl: null }, true);
@@ -1802,6 +1820,30 @@ export default function ReviewGraphicGenerator() {
                               >
                                 Refresh
                               </button>
+                            </div>
+                          )}
+
+                          {/* Sort order — Google reviews via SerpAPI */}
+                          {(fetchedReviews.length > 0 || fetchingReviews) && (
+                            <div className="flex gap-1 bg-[#0A0A0F] rounded-xl p-1">
+                              {([['relevant', 'Most Relevant'], ['recent', 'Most Recent']] as const).map(([val, label]) => (
+                                <button
+                                  key={val}
+                                  disabled={fetchingReviews}
+                                  onClick={() => {
+                                    if (reviewSort === val) return;
+                                    setReviewSort(val);
+                                    if (selectedPlace) fetchReviews({ ...selectedPlace, photoUrl: null }, false, val);
+                                  }}
+                                  className={`flex-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium transition-all disabled:opacity-50 ${
+                                    reviewSort === val
+                                      ? 'bg-purple-500/15 text-purple-300 border border-purple-500/30'
+                                      : 'text-zinc-400 hover:text-zinc-200 border border-transparent'
+                                  }`}
+                                >
+                                  {label}
+                                </button>
+                              ))}
                             </div>
                           )}
 

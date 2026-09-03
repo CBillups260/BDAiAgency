@@ -8,10 +8,15 @@ import {
   RefreshCw,
   Check,
   Package,
+  Send,
 } from '@geist-ui/icons';
 import { motion, AnimatePresence } from 'motion/react';
 import { addToFlowBucket } from './FlowBucket';
 import { usePersistedState } from '../hooks/usePersistedState';
+import { useFirestoreAccounts, type FirestoreAccount as Account } from '../hooks/useFirestore';
+import { firestore, storage, COLLECTIONS } from '../lib/firebase';
+import { collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 const RATIOS = [
   { id: '1:1', label: '1:1', w: 1, h: 1 },
@@ -44,6 +49,15 @@ export default function SubjectIsolator() {
 
   // Export
   const [flowAdded, setFlowAdded] = useState(false);
+
+  // Send to Account
+  const [showAccountPicker, setShowAccountPicker] = useState(false);
+  const [sendingTo, setSendingTo] = useState<string | null>(null);
+  const [sendStatus, setSendStatus] = useState<
+    | { kind: 'success'; accountName: string; assetName: string; menuMatch: string | null; tags: string[]; category: string }
+    | { kind: 'error'; message: string }
+    | null
+  >(null);
 
   // ── File handling ─────────────────────────────────────
   const processFile = useCallback((file: File) => {
@@ -101,6 +115,7 @@ export default function SubjectIsolator() {
     setError(null);
     setResultImage(null);
     setResultBase64(null);
+    setSendStatus(null);
     try {
       const res = await authedFetch('/api/content/extract-background', {
         method: 'POST',
@@ -141,6 +156,86 @@ export default function SubjectIsolator() {
     setFlowAdded(true);
     setTimeout(() => setFlowAdded(false), 2000);
   };
+
+  const handleSendToAccount = useCallback(async (account: Account) => {
+    if (!resultBase64) return;
+    setShowAccountPicker(false);
+    setSendingTo(account.id);
+    setSendStatus(null);
+    try {
+      const menuSnap = await getDocs(
+        query(collection(firestore, COLLECTIONS.menuItems), where('accountId', '==', account.id))
+      );
+      const menuItems = menuSnap.docs.map((d) => {
+        const data = d.data() as { name?: string; category?: string; description?: string };
+        return {
+          name: data.name || '',
+          category: data.category || '',
+          description: data.description || undefined,
+        };
+      }).filter((m) => m.name);
+
+      let analysis: {
+        name?: string;
+        category?: string;
+        tags?: string[];
+        description?: string | null;
+        menuMatch?: string | null;
+      } = {};
+      try {
+        const res = await authedFetch('/api/content/analyze-asset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageBase64: resultBase64,
+            imageMimeType: 'image/png',
+            menuItems,
+          }),
+        });
+        if (res.ok) analysis = await res.json();
+      } catch {
+        // Analysis is best-effort — fall back to defaults below
+      }
+
+      const safeName = (analysis.name || 'Extracted Background').replace(/\s+/g, '-').toLowerCase();
+      const fileName = `${Date.now()}-${safeName}.png`;
+      const sref = storageRef(storage, `assets/${account.id}/${fileName}`);
+      const bytes = Uint8Array.from(atob(resultBase64), (c) => c.charCodeAt(0));
+      await uploadBytes(sref, bytes, { contentType: 'image/png' });
+      const imageUrl = await getDownloadURL(sref);
+
+      const assetName = analysis.name || 'Extracted Background';
+      const category = analysis.category || 'Uncategorized';
+      const tags = analysis.tags || [];
+      const menuMatch = analysis.menuMatch || null;
+
+      await addDoc(collection(firestore, COLLECTIONS.mediaAssets), {
+        accountId: account.id,
+        name: assetName,
+        category,
+        tags,
+        description: analysis.description || null,
+        menuMatch,
+        imageUrl,
+        mimeType: 'image/png',
+        source: 'ai-enhancer',
+        createdAt: serverTimestamp(),
+      });
+
+      setSendStatus({
+        kind: 'success',
+        accountName: account.company,
+        assetName,
+        menuMatch,
+        tags,
+        category,
+      });
+    } catch (e: any) {
+      setSendStatus({ kind: 'error', message: e?.message || 'Failed to send to account' });
+    } finally {
+      setSendingTo(null);
+    }
+  }, [resultBase64]);
 
   return (
     <div className="max-w-4xl space-y-5">
@@ -285,9 +380,17 @@ export default function SubjectIsolator() {
             animate={{ opacity: 1, y: 0 }}
             className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5"
           >
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">Extracted Background</h3>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowAccountPicker(true)}
+                  disabled={sendingTo !== null}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-[#27273A] text-zinc-400 hover:text-white hover:bg-[#181824] transition-colors disabled:opacity-50"
+                >
+                  {sendingTo ? <Loader size={12} className="animate-spin text-purple-400" /> : <Send size={12} />}
+                  {sendingTo ? 'Filing…' : 'Send to Account'}
+                </button>
                 <button
                   onClick={handleFlowBucket}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-[#27273A] text-zinc-400 hover:text-white hover:bg-[#181824] transition-colors"
@@ -304,6 +407,35 @@ export default function SubjectIsolator() {
                 </button>
               </div>
             </div>
+
+            {sendStatus && sendStatus.kind === 'success' && (
+              <div className="mb-4 p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20 flex items-start gap-3">
+                <Check size={14} className="text-emerald-400 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-emerald-300">
+                    Filed to <span className="font-medium text-emerald-200">{sendStatus.accountName}</span> as <span className="font-medium text-emerald-200">"{sendStatus.assetName}"</span>
+                  </p>
+                  <p className="text-[10px] text-zinc-500 mt-1">
+                    {sendStatus.menuMatch ? <>Matched menu item: <span className="text-emerald-300">{sendStatus.menuMatch}</span> · </> : null}
+                    {sendStatus.category && sendStatus.category !== 'Uncategorized' ? <>Category: <span className="text-zinc-400">{sendStatus.category}</span></> : null}
+                    {sendStatus.tags.length > 0 ? <> · Tags: <span className="text-zinc-400">{sendStatus.tags.join(', ')}</span></> : null}
+                    {' '}<span className="text-zinc-600">— edit in Accounts (Second Brain)</span>
+                  </p>
+                </div>
+                <button onClick={() => setSendStatus(null)} className="text-zinc-500 hover:text-white shrink-0">
+                  <X size={12} />
+                </button>
+              </div>
+            )}
+            {sendStatus && sendStatus.kind === 'error' && (
+              <div className="mb-4 p-3 rounded-xl bg-red-500/5 border border-red-500/20 flex items-start gap-3">
+                <X size={14} className="text-red-400 mt-0.5 shrink-0" />
+                <p className="text-xs text-red-300 flex-1">{sendStatus.message}</p>
+                <button onClick={() => setSendStatus(null)} className="text-zinc-500 hover:text-white shrink-0">
+                  <X size={12} />
+                </button>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Original */}
@@ -332,6 +464,88 @@ export default function SubjectIsolator() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {showAccountPicker && (
+        <AccountPickerModal
+          onPick={handleSendToAccount}
+          onClose={() => setShowAccountPicker(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function AccountPickerModal({
+  onPick,
+  onClose,
+}: {
+  onPick: (account: Account) => void;
+  onClose: () => void;
+}) {
+  const { accounts, loading } = useFirestoreAccounts();
+  const [search, setSearch] = useState('');
+  const filtered = accounts.filter((a) =>
+    a.company?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-[#0A0A0F] border border-[#27273A] rounded-2xl w-full max-w-2xl max-h-[80dvh] overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-5 border-b border-[#27273A]">
+          <div>
+            <h3 className="text-lg font-medium text-white">Send to Account</h3>
+            <p className="text-xs text-zinc-500 mt-0.5">AI will auto-categorize and link it to a menu item if it matches.</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-[#181824] transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-4 border-b border-[#27273A]">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search accounts…"
+            autoFocus
+            className="w-full bg-[#12121A] border border-[#27273A] rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 outline-none focus:border-purple-500/40 transition-colors"
+          />
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {loading ? (
+            <p className="text-sm text-zinc-600 text-center py-8">Loading accounts…</p>
+          ) : filtered.length === 0 ? (
+            <p className="text-sm text-zinc-600 text-center py-8">
+              {search ? 'No accounts match that search.' : 'No accounts yet. Add one in Accounts (Second Brain).'}
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {filtered.map((acct) => (
+                <button
+                  key={acct.id}
+                  onClick={() => onPick(acct)}
+                  className="flex items-center gap-3 p-3 rounded-xl border border-[#27273A] hover:border-purple-500/40 hover:bg-purple-500/5 transition-colors text-left"
+                >
+                  <img
+                    src={acct.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(acct.company || '')}&background=27273A&color=fff&size=40`}
+                    alt=""
+                    className="w-10 h-10 rounded-lg border border-[#27273A] object-cover shrink-0"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-white truncate">{acct.company}</p>
+                    {acct.industry && <p className="text-[10px] text-zinc-500 truncate">{acct.industry}</p>}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </motion.div>
     </div>
   );
 }

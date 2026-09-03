@@ -11,6 +11,8 @@ import {
   X,
   Briefcase,
   Image as ImageIcon,
+  Zap,
+  Grid,
 } from "@geist-ui/icons";
 import { motion } from "motion/react";
 import { ref, uploadBytes, getDownloadURL, getBlob } from "firebase/storage";
@@ -18,7 +20,10 @@ import { storage } from "../lib/firebase";
 import { useFirestoreAccounts, useBusinessSettings } from "../hooks/useFirestore";
 import { usePersistedState } from "../hooks/usePersistedState";
 import { getGhlLocationId, getGhlPrivateIntegrationToken } from "../lib/utils";
+import { extractGhlAccounts, type GhlAccountRow } from "../lib/ghl";
 import CaptionGeneratorMini from "./CaptionGeneratorMini";
+import BulkScheduleUploader from "./BulkScheduleUploader";
+import ScheduleSheet from "./ScheduleSheet";
 import { useAuth } from "../hooks/useAuth";
 import {
   usePendingHandoffsForAssignee,
@@ -29,29 +34,6 @@ import {
   clientAccountIdForHandoffInQueue,
   type ScheduleHandoff,
 } from "../hooks/useScheduleHandoffs";
-
-interface GhlAccountRow {
-  id: string;
-  name: string;
-  platform?: string;
-}
-
-function extractGhlAccounts(data: unknown): GhlAccountRow[] {
-  const d = data as Record<string, unknown> | null | undefined;
-  const results = (d?.results ?? d) as Record<string, unknown> | undefined;
-  const raw = (results?.accounts ?? results?.data) as unknown;
-  const list = Array.isArray(raw) ? raw : (raw as Record<string, unknown>)?.accounts;
-  if (!Array.isArray(list)) return [];
-  return list
-    .map((item) => {
-      const a = item as Record<string, unknown>;
-      const id = String(a.id ?? a._id ?? "").trim();
-      const name = String(a.name ?? a.accountName ?? "Connected account");
-      const platform = typeof a.platform === "string" ? a.platform : undefined;
-      return { id, name, platform };
-    })
-    .filter((row) => row.id.length > 0);
-}
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -121,12 +103,33 @@ function HandoffRow({
   onLoad: (h: ScheduleHandoff) => void;
   onSkip: (id: string) => void;
 }) {
+  const isAiMode = h.processingMode === "ai_auto";
+  const aiProcessing = isAiMode && h.aiProcessingStatus === "processing";
+  const aiReady = isAiMode && h.aiProcessingStatus === "ready_for_approval";
+  const aiFailed = isAiMode && h.aiProcessingStatus === "failed";
+
+  const loadLabel = isActive
+    ? "Loaded below"
+    : !h.imageUrl?.trim()
+      ? "Waiting for image"
+      : aiReady
+        ? "Review & approve"
+        : aiProcessing
+          ? "Load (AI still working)"
+          : "Load in composer";
+
+  const loadClass = aiReady
+    ? "bg-gradient-to-r from-emerald-600 to-teal-500 text-white hover:from-emerald-500 hover:to-teal-400 shadow-emerald-900/30"
+    : "bg-gradient-to-r from-amber-600 to-orange-500 text-white hover:from-amber-500 hover:to-orange-400 shadow-amber-900/20";
+
   return (
     <div
       className={`flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 rounded-xl border p-2.5 sm:p-3 transition-colors ${
         isActive
           ? "border-emerald-500/45 bg-emerald-500/[0.08] ring-1 ring-emerald-500/30"
-          : "border-white/[0.08] bg-[#0a0a10]/80"
+          : aiReady
+            ? "border-emerald-500/30 bg-emerald-500/[0.04]"
+            : "border-white/[0.08] bg-[#0a0a10]/80"
       }`}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -153,12 +156,48 @@ function HandoffRow({
                 Now in composer
               </span>
             ) : null}
+            {aiReady && !isActive && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-300 px-2 py-0.5 rounded-md bg-emerald-500/12 border border-emerald-500/30">
+                <Zap size={10} /> AI ready
+              </span>
+            )}
+            {aiProcessing && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-purple-300 px-2 py-0.5 rounded-md bg-purple-500/12 border border-purple-500/30">
+                <Loader size={10} className="animate-spin" /> AI working
+              </span>
+            )}
+            {aiFailed && (
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-300 px-2 py-0.5 rounded-md bg-amber-500/12 border border-amber-500/30">
+                AI fallback — manual
+              </span>
+            )}
           </div>
           {h.captionHint ? (
-            <p className="text-xs text-zinc-400 mt-1 line-clamp-2">{h.captionHint}</p>
+            <p className="text-xs text-zinc-400 mt-1 line-clamp-2">
+              {aiReady && <span className="text-emerald-300/90 font-medium">AI caption: </span>}
+              {h.captionHint}
+            </p>
           ) : (
             <p className="text-xs text-zinc-500 mt-1">
               {clientName} is pre-selected when you load this post.
+            </p>
+          )}
+          {aiReady && h.aiSuggestedScheduleAt && (
+            <p className="text-[11px] text-emerald-300/85 mt-1">
+              AI picked{" "}
+              {(() => {
+                const d = new Date(h.aiSuggestedScheduleAt);
+                return Number.isNaN(d.getTime())
+                  ? h.aiSuggestedScheduleAt
+                  : d.toLocaleString(undefined, {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    });
+              })()}
+              {" — review before approving."}
             </p>
           )}
         </div>
@@ -168,17 +207,13 @@ function HandoffRow({
           type="button"
           disabled={isActive || !h.imageUrl?.trim()}
           onClick={() => void onLoad(h)}
-          className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all shadow-lg shadow-amber-900/20 ${
+          className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all shadow-lg ${
             isActive || !h.imageUrl?.trim()
-              ? "bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700"
-              : "bg-gradient-to-r from-amber-600 to-orange-500 text-white hover:from-amber-500 hover:to-orange-400"
+              ? "bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700 shadow-none"
+              : loadClass
           }`}
         >
-          {isActive
-            ? "Loaded below"
-            : !h.imageUrl?.trim()
-              ? "Waiting for image"
-              : "Load in composer"}
+          {loadLabel}
         </button>
         <button
           type="button"
@@ -287,6 +322,8 @@ function QueueGroup({
 
 export default function GhlSchedulePanel() {
   const { user } = useAuth();
+  const [showBulkUploader, setShowBulkUploader] = useState(false);
+  const [showSheet, setShowSheet] = useState(false);
   const { handoffs: pendingHandoffs } = usePendingHandoffsForAssignee(user?.uid);
   const pendingHandoffsByClient = useMemo(
     () => groupPendingHandoffsByClient(pendingHandoffs),
@@ -679,13 +716,27 @@ export default function GhlSchedulePanel() {
         return h.imageUrl;
       });
       setScheduleImageUrl(h.imageUrl);
-      setCaption((c) => (c.trim() ? c : (h.captionHint?.trim() ?? "")));
+
+      // AI-prepared handoff: trust the AI caption + time and pull them into the composer.
+      const aiReady = h.processingMode === "ai_auto" && h.aiProcessingStatus === "ready_for_approval";
+      if (aiReady && h.aiSuggestedCaption?.trim()) {
+        setCaption(h.aiSuggestedCaption);
+      } else {
+        setCaption((c) => (c.trim() ? c : (h.captionHint?.trim() ?? "")));
+      }
+
       if (h.clientAccountId?.trim()) {
         const stillExists = firestoreAccounts.some((a) => a.id === h.clientAccountId);
         if (stillExists) setSelectedClientId(h.clientAccountId);
       }
-      setSuggestedAt(null);
-      setSuggestReason(null);
+
+      if (aiReady && h.aiSuggestedScheduleAt?.trim()) {
+        setSuggestedAt(h.aiSuggestedScheduleAt);
+        setSuggestReason(h.aiSuggestReason?.trim() || "AI proposed this slot — review before approving.");
+      } else {
+        setSuggestedAt(null);
+        setSuggestReason(null);
+      }
       setError(null);
 
       if (h.imageStoragePath) {
@@ -939,25 +990,61 @@ export default function GhlSchedulePanel() {
             Choose a client, add a photo and caption, pick where it should go, and let AI suggest the best time—or pick the time yourself.
           </p>
         </div>
+        <div className="flex flex-wrap items-center gap-2 self-start">
+          <button
+            type="button"
+            onClick={() => setShowSheet(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border border-sky-500/35 bg-sky-500/10 text-sky-200 hover:bg-sky-500/20 transition-colors"
+          >
+            <Grid size={15} />
+            Sheet view
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowBulkUploader(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border border-emerald-500/35 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20 transition-colors"
+          >
+            <Zap size={15} />
+            Bulk upload
+          </button>
+        </div>
       </div>
+
+      {showSheet && <ScheduleSheet onClose={() => setShowSheet(false)} />}
+      {showBulkUploader && <BulkScheduleUploader onClose={() => setShowBulkUploader(false)} />}
 
       {pendingHandoffs.length > 0 && (
         <div className="rounded-2xl border border-amber-500/35 bg-gradient-to-r from-amber-500/[0.09] to-orange-500/[0.05] px-4 py-4 sm:px-5 sm:py-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] font-semibold text-amber-200/95 uppercase tracking-wider flex items-center gap-2">
               <Upload size={14} className="text-amber-400" />
-              Task handoff queue
+              Handoff queue
             </p>
-            <span className="text-xs font-semibold text-amber-100 tabular-nums">
-              <span className="text-amber-400/90">{pendingHandoffs.length}</span> in queue ·{" "}
-              <span className="text-amber-400/90">{pendingHandoffsByClient.length}</span> brand
-              {pendingHandoffsByClient.length !== 1 ? "s" : ""}
+            <span className="text-xs font-semibold text-amber-100 tabular-nums flex flex-wrap items-center gap-2">
+              <span>
+                <span className="text-amber-400/90">{pendingHandoffs.length}</span> in queue ·{" "}
+                <span className="text-amber-400/90">{pendingHandoffsByClient.length}</span> brand
+                {pendingHandoffsByClient.length !== 1 ? "s" : ""}
+              </span>
+              {pendingHandoffs.some(
+                (h) => h.processingMode === "ai_auto" && h.aiProcessingStatus === "ready_for_approval"
+              ) && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-[10px]">
+                  <Zap size={10} />
+                  {
+                    pendingHandoffs.filter(
+                      (h) => h.processingMode === "ai_auto" && h.aiProcessingStatus === "ready_for_approval"
+                    ).length
+                  }{" "}
+                  AI ready
+                </span>
+              )}
             </span>
           </div>
           <p className="text-[11px] text-amber-200/60 leading-relaxed">
-            Bulk uploads from Tasks appear here by brand. One post is loaded in the composer at a time (highlighted below).
-            After you <span className="text-amber-200/90">schedule in HighLevel</span>, the next image for that brand loads
-            automatically until the queue is clear.
+            Bulk uploads from Tasks <span className="text-amber-200/90">and pushes from Composer / Photo Enhancer</span> land here by brand.
+            One post is loaded in the composer at a time (highlighted below). AI-pre-filled items show in green —
+            review the caption + time, then <span className="text-amber-200/90">Schedule this post</span> to publish.
           </p>
           <div className="flex flex-col gap-4 max-h-[min(60vh,520px)] overflow-y-auto pr-1 -mr-1">
             {pendingHandoffsByClient.map((group) => (

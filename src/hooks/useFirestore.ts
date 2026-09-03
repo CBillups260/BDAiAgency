@@ -49,6 +49,8 @@ export interface FirestoreAccount {
   platform: string | null;
   industry: string | null;
   website: string | null;
+  phone: string | null;
+  address: string | null;
   description: string | null;
   brandVoice: string | null;
   targetAudience: string | null;
@@ -56,8 +58,10 @@ export interface FirestoreAccount {
   primaryLogo: string | null;
   lightLogo: string | null;
   darkLogo: string | null;
+  simplisticLogo: string | null; // minimalist mark / segment of the logo (e.g. icon only, no wordmark)
   brandFont: string | null;
   brandFontData: string | null; // base64 font file for custom uploads
+  brandFontImage: string | null; // base64 photo/screenshot of a lettering style to replicate (AI visual reference)
   socialHandles: Record<string, string> | null;
   servicesSubscribed: string[] | null;
   contractStart: string | null;
@@ -498,6 +502,15 @@ export interface FirestoreMediaAsset {
   createdAt?: any;
 }
 
+/** Standalone media-asset write (for batch tools that don't subscribe to one account). */
+export async function createMediaAsset(data: Omit<FirestoreMediaAsset, 'id' | 'createdAt'>): Promise<string> {
+  const ref = await addDoc(collection(firestore, COLLECTIONS.mediaAssets), {
+    ...data,
+    createdAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
 export function useFirestoreMediaAssets(accountId: string | null) {
   const [assets, setAssets] = useState<FirestoreMediaAsset[]>([]);
   const [loading, setLoading] = useState(false);
@@ -529,11 +542,15 @@ export function useFirestoreMediaAssets(accountId: string | null) {
     return { ...rest, id: ref.id } as FirestoreMediaAsset;
   }, []);
 
+  const updateAsset = useCallback(async (id: string, data: Partial<Omit<FirestoreMediaAsset, 'id' | 'accountId' | 'createdAt'>>) => {
+    await updateDoc(doc(firestore, COLLECTIONS.mediaAssets, id), data);
+  }, []);
+
   const removeAsset = useCallback(async (id: string) => {
     await deleteDoc(doc(firestore, COLLECTIONS.mediaAssets, id));
   }, []);
 
-  return { assets, loading, addAsset, removeAsset };
+  return { assets, loading, addAsset, updateAsset, removeAsset };
 }
 
 // ─── Prospects (real-time) ────────────────────────────────

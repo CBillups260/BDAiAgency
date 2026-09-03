@@ -308,7 +308,7 @@ export default function TitleGenerator() {
         </div>
 
         {/* ── Right: Controls ─────────────────────────── */}
-        <div className="space-y-4 overflow-y-auto max-h-[calc(100vh-200px)] pr-1">
+        <div className="space-y-4 overflow-y-auto max-h-[calc(100dvh-200px)] pr-1">
           {/* Style Reference Upload */}
           <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
             <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Style Reference</h3>

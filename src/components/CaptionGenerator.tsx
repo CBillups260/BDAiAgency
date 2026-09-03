@@ -15,6 +15,17 @@ import {
   Image,
   ChevronDown,
   RefreshCw,
+  Globe,
+  Phone,
+  Calendar,
+  ShoppingBag,
+  MessageCircle,
+  MapPin,
+  Heart,
+  Users,
+  Edit3,
+  Slash,
+  Zap,
 } from '@geist-ui/icons';
 import { motion, AnimatePresence } from 'motion/react';
 import { useFirestoreAccounts } from '../hooks/useFirestore';
@@ -54,6 +65,35 @@ const CAPTION_STYLES = [
   { id: 'controversial', label: 'Hot Take', desc: 'Unpopular opinion, debate starter' },
   { id: 'minimal', label: 'Minimal', desc: 'Ultra short — 5 words or less' },
   { id: 'poetic', label: 'Poetic', desc: 'Lyrical, rhythmic, artistic flow' },
+] as const;
+
+type CtaInputKind = 'none' | 'url' | 'phone' | 'text';
+
+interface CtaType {
+  id: string;
+  label: string;
+  desc: string;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  input: CtaInputKind;
+  /** When set, autofill the value from this field on the selected account */
+  autoField?: 'website';
+  /** Placeholder hint for the value input */
+  placeholder?: string;
+}
+
+const CTA_TYPES: readonly CtaType[] = [
+  { id: 'auto', label: 'Auto', desc: 'AI picks a natural CTA', icon: Zap, input: 'none' },
+  { id: 'visit-website', label: 'Visit our link', desc: 'Drive to website', icon: Globe, input: 'url', autoField: 'website', placeholder: 'https://yourbrand.com' },
+  { id: 'call', label: 'Call us', desc: 'Phone number', icon: Phone, input: 'phone', placeholder: '(555) 123-4567' },
+  { id: 'book-table', label: 'Book a table', desc: 'Reservations link', icon: Calendar, input: 'url', autoField: 'website', placeholder: 'Reservation URL' },
+  { id: 'order-online', label: 'Order online', desc: 'Ordering link', icon: ShoppingBag, input: 'url', autoField: 'website', placeholder: 'Ordering URL' },
+  { id: 'dm-to-book', label: 'DM to book', desc: 'Slide into DMs', icon: MessageCircle, input: 'none' },
+  { id: 'visit-store', label: 'Visit in store', desc: 'Drive foot traffic', icon: MapPin, input: 'text', placeholder: 'Address or location detail' },
+  { id: 'follow', label: 'Follow us', desc: 'Drive followers', icon: Heart, input: 'none' },
+  { id: 'tag-friend', label: 'Tag a friend', desc: 'Boost engagement', icon: Users, input: 'none' },
+  { id: 'comment', label: 'Comment below', desc: 'Spark conversation', icon: MessageCircle, input: 'text', placeholder: 'Optional question prompt' },
+  { id: 'custom', label: 'Custom', desc: 'Write your own', icon: Edit3, input: 'text', placeholder: 'Your CTA copy or instruction' },
+  { id: 'none', label: 'No CTA', desc: 'Skip the CTA', icon: Slash, input: 'none' },
 ] as const;
 
 const ACCEPT_TYPES = 'image/jpeg,image/png,image/webp,video/mp4,video/webm,audio/mpeg,audio/wav,application/pdf';
@@ -96,6 +136,8 @@ export default function CaptionGenerator() {
   const [context, setContext] = usePersistedState<string>('caption.context', '');
   const [includeHashtags, setIncludeHashtags] = usePersistedState<boolean>('caption.hashtags', true);
   const [includeEmojis, setIncludeEmojis] = usePersistedState<boolean>('caption.emojis', false);
+  const [ctaType, setCtaType] = usePersistedState<string>('caption.ctaType', 'auto');
+  const [ctaValue, setCtaValue] = usePersistedState<string>('caption.ctaValue', '');
   const [mediaFiles, setMediaFiles] = usePersistedState<MediaFile[]>('caption.mediaFiles', []);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [selectedCaptionIdx, setSelectedCaptionIdx] = useState(0);
@@ -108,6 +150,15 @@ export default function CaptionGenerator() {
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId) || null;
   const activePlatform = PLATFORMS.find((p) => p.id === platform)!;
+  const activeCta = CTA_TYPES.find((c) => c.id === ctaType) || CTA_TYPES[0];
+
+  const resolvedCtaValue = (() => {
+    if (activeCta.input === 'none') return '';
+    const trimmed = ctaValue.trim();
+    if (trimmed) return trimmed;
+    if (activeCta.autoField === 'website') return selectedAccount?.website?.trim() || '';
+    return '';
+  })();
 
   const handleGenerate = useCallback(async () => {
     if (!selectedAccount || !mediaFiles.length) return;
@@ -125,6 +176,7 @@ export default function CaptionGenerator() {
             brandVoice: selectedAccount.brandVoice,
             targetAudience: selectedAccount.targetAudience,
             socialHandles: selectedAccount.socialHandles,
+            website: selectedAccount.website,
           },
           media: mediaFiles.map(({ base64, mimeType }) => ({ base64, mimeType })),
           platform,
@@ -132,6 +184,11 @@ export default function CaptionGenerator() {
           topic: context.trim() || undefined,
           includeHashtags,
           includeEmojis,
+          cta: {
+            type: activeCta.id,
+            label: activeCta.label,
+            value: resolvedCtaValue,
+          },
         }),
       });
       if (!res.ok) {
@@ -151,7 +208,7 @@ export default function CaptionGenerator() {
     } finally {
       setLoading(false);
     }
-  }, [selectedAccount, mediaFiles, platform, captionStyle, context, includeHashtags, includeEmojis]);
+  }, [selectedAccount, mediaFiles, platform, captionStyle, context, includeHashtags, includeEmojis, activeCta, resolvedCtaValue]);
 
   const processFiles = useCallback(async (files: FileList | File[]) => {
     const newFiles: MediaFile[] = [];
@@ -410,6 +467,35 @@ export default function CaptionGenerator() {
         )}
       </AnimatePresence>
 
+      {/* ── Caption Guidance ──────────────────────────── */}
+      <AnimatePresence>
+        {selectedAccount && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">Caption Guidance</h3>
+                <span className="text-[10px] text-zinc-600">Optional</span>
+              </div>
+              <textarea
+                value={context}
+                onChange={(e) => setContext(e.target.value)}
+                placeholder="What's this post about? Add topics, key details, names, dates, or anything that must appear in the caption — e.g. 'Launching our new truffle gnocchi this Friday', 'Behind-the-scenes from our anniversary shoot', 'Spotlight on our barista Maya'..."
+                rows={3}
+                className="w-full bg-[#0A0A0F] border border-[#27273A] rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-600 outline-none focus:border-purple-500/40 transition-colors resize-none leading-relaxed"
+              />
+              <p className="text-[10px] text-zinc-600 mt-2">
+                The more specific you are, the more on-point the captions will be.
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── Caption Style ─────────────────────────────── */}
       <AnimatePresence>
         {selectedAccount && (
@@ -442,7 +528,80 @@ export default function CaptionGenerator() {
         )}
       </AnimatePresence>
 
-      {/* ── Options (Platform, Toggles, Context) ───────── */}
+      {/* ── Call to Action ────────────────────────────── */}
+      <AnimatePresence>
+        {selectedAccount && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">Call to Action</h3>
+                <span className="text-[10px] text-zinc-600">How should each caption close?</span>
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-1.5">
+                {CTA_TYPES.map((c) => {
+                  const Icon = c.icon;
+                  const active = ctaType === c.id;
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        setCtaType(c.id);
+                        setCtaValue('');
+                      }}
+                      className={`px-2 py-2.5 rounded-xl border text-center transition-all flex flex-col items-center gap-1 ${
+                        active
+                          ? 'bg-purple-500/10 border-purple-500/30'
+                          : 'border-[#27273A] bg-[#0A0A0F] hover:border-zinc-600'
+                      }`}
+                    >
+                      <Icon size={13} className={active ? 'text-purple-300' : 'text-zinc-400'} />
+                      <p className={`text-[11px] font-semibold leading-tight ${active ? 'text-purple-300' : 'text-zinc-300'}`}>{c.label}</p>
+                      <p className="text-[8px] text-zinc-500 leading-tight">{c.desc}</p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Conditional value input — URL/phone/text */}
+              {activeCta.input !== 'none' && (
+                <div className="mt-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    {activeCta.input === 'url' && <Globe size={11} className="text-zinc-500" />}
+                    {activeCta.input === 'phone' && <Phone size={11} className="text-zinc-500" />}
+                    {activeCta.input === 'text' && <Edit3 size={11} className="text-zinc-500" />}
+                    <label className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">
+                      {activeCta.input === 'url' ? 'Link' : activeCta.input === 'phone' ? 'Phone number' : 'Details'}
+                    </label>
+                    {activeCta.autoField === 'website' && selectedAccount?.website && !ctaValue.trim() && (
+                      <span className="text-[10px] text-emerald-400/80">
+                        Using account website
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    type={activeCta.input === 'url' ? 'url' : activeCta.input === 'phone' ? 'tel' : 'text'}
+                    value={ctaValue}
+                    onChange={(e) => setCtaValue(e.target.value)}
+                    placeholder={
+                      activeCta.autoField === 'website' && selectedAccount?.website
+                        ? selectedAccount.website
+                        : activeCta.placeholder || ''
+                    }
+                    className="w-full bg-[#0A0A0F] border border-[#27273A] rounded-xl px-4 py-2.5 text-sm text-white placeholder-zinc-600 outline-none focus:border-purple-500/40 transition-colors"
+                  />
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Options (Platform, Toggles) ──────────────── */}
       <AnimatePresence>
         {selectedAccount && (
           <motion.div
@@ -459,7 +618,7 @@ export default function CaptionGenerator() {
                 <div className="flex items-center gap-3">
                   <span className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium">Options</span>
                   <span className="text-[10px] text-zinc-600">
-                    {activePlatform.label} &middot; {includeHashtags ? 'Hashtags on' : 'No hashtags'} &middot; {includeEmojis ? 'Emojis on' : 'No emojis'}
+                    {activePlatform.label} &middot; CTA: {activeCta.label} &middot; {includeHashtags ? 'Hashtags on' : 'No hashtags'} &middot; {includeEmojis ? 'Emojis on' : 'No emojis'}
                   </span>
                 </div>
                 <ChevronDown
@@ -509,25 +668,18 @@ export default function CaptionGenerator() {
                         </label>
                       </div>
 
-                      {/* Optional context + regenerate */}
-                      <div className="flex gap-3">
-                        <input
-                          type="text"
-                          value={context}
-                          onChange={(e) => setContext(e.target.value)}
-                          placeholder="Optional extra context... e.g. 'This is our new lunch special'"
-                          className="flex-1 bg-[#0A0A0F] border border-[#27273A] rounded-xl px-4 py-2.5 text-sm text-white placeholder-zinc-600 outline-none focus:border-purple-500/40 transition-colors"
-                        />
-                        {hasMedia && (
+                      {/* Regenerate */}
+                      {hasMedia && (
+                        <div className="flex justify-end">
                           <button
                             onClick={handleGenerate}
                             disabled={loading}
-                            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-purple-500 text-xs text-white font-medium hover:from-purple-500 hover:to-purple-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-purple-500 text-xs text-white font-medium hover:from-purple-500 hover:to-purple-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             <RefreshCw size={12} /> Regenerate
                           </button>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 )}

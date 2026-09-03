@@ -181,7 +181,10 @@ export default function FlowBucket() {
   if (!visible && items.length === 0) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-40" style={{ maxWidth: collapsed ? 200 : 400 }}>
+    <div
+      className="fixed bottom-20 right-3 lg:bottom-4 lg:right-4 z-40"
+      style={{ maxWidth: `min(${collapsed ? 200 : 400}px, calc(100vw - 1.5rem))` }}
+    >
       <div className="bg-[#12121A] border border-[#27273A] rounded-2xl shadow-2xl overflow-hidden">
         {/* Header */}
         <div

@@ -5,7 +5,10 @@ import { createApp } from "./app.js";
 setGlobalOptions({
   region: "us-central1",
   maxInstances: 10,
-  memory: "512MiB",
+  // 1GiB gives headroom for server-side ffmpeg video branding (input+output
+  // live in /tmp, which is in-memory on Cloud Functions) on top of the
+  // existing image-generation routes.
+  memory: "1GiB",
   timeoutSeconds: 540,
 });
 
