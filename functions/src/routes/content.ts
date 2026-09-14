@@ -410,6 +410,7 @@ Produce a single photorealistic output image that follows this instruction preci
         prompt: fullPrompt,
         aspectRatio,
         resolution: selectedRes,
+        quality: rawQuality,
         references: references.map((r) => ({ base64: r.base64, mimeType: r.mimeType })),
       });
       images.push(...falImages);
@@ -1032,6 +1033,7 @@ ${dishName.trim() ? `The subject is: ${dishName.trim()}.` : ""}`;
         prompt,
         aspectRatio,
         resolution: selectedRes,
+        quality: rawQuality,
         references: referenceImage
           ? [{ base64: referenceImage.base64, mimeType: referenceImage.mimeType }]
           : [],

@@ -111,7 +111,12 @@ export const MODELS: CatalogModel[] = [
   { id: 'fal-ai/gemini-25-flash-image', name: 'Gemini 2.5 Flash Image', provider: 'google', refs: 'multi', maxRes: '2K', bestFor: ['fast', 'editing'], features: ['refs'], tier: 2 },
 
   // ─────────────── OpenAI ───────────────
-  { id: 'gpt-image-2', name: 'GPT Image 2', provider: 'openai', refs: 'single', maxRes: '4K', bestFor: ['photoreal', 'editing'], features: ['refs', 'hires'], isNew: true, featured: true, direct: true, tier: 3 },
+  // GPT Image 2.5 (Sept 2026) ships as two Fal-hosted variants. Flare = default
+  // (higher quality than GPT Image 2 at ~50% lower latency); Sunburst = premium,
+  // tighter control across multi-turn edits. Both take up to 16 refs via `/edit`.
+  { id: 'openai/gpt-image-2.5/flare/text-to-image', name: 'GPT Image 2.5 Flare', provider: 'openai', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'editing', 'typography'], features: ['refs', 'hires'], isNew: true, featured: true, tier: 3 },
+  { id: 'openai/gpt-image-2.5/sunburst/text-to-image', name: 'GPT Image 2.5 Sunburst', provider: 'openai', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'editing', 'typography'], features: ['refs', 'hires'], isNew: true, featured: true, tier: 4 },
+  { id: 'gpt-image-2', name: 'GPT Image 2', provider: 'openai', refs: 'single', maxRes: '4K', bestFor: ['photoreal', 'editing'], features: ['refs', 'hires'], featured: true, direct: true, tier: 3 },
   { id: 'fal-ai/gpt-image-1/text-to-image', name: 'GPT Image 1', provider: 'openai', refs: 'none', maxRes: '2K', bestFor: ['photoreal'], tier: 3 },
   { id: 'fal-ai/gpt-image-1-mini', name: 'GPT Image 1 Mini', provider: 'openai', refs: 'none', maxRes: '2K', bestFor: ['fast', 'budget'], tier: 2 },
 
@@ -209,6 +214,35 @@ export function modelName(id: string): string {
 }
 
 export const DEFAULT_MODEL_ID = 'gemini-3-pro-image-preview';
+
+// ── OpenAI quality ladder ────────────────────────────────────────────────
+export interface QualityOption { id: string; label: string; sub: string }
+
+/** Quality tiers exposed for OpenAI image models. `xhigh` / `max` only exist on GPT Image 2.5. */
+export const OPENAI_QUALITY_OPTIONS: QualityOption[] = [
+  { id: 'low', label: 'Low', sub: 'Fast, cheap' },
+  { id: 'medium', label: 'Medium', sub: 'Balanced' },
+  { id: 'high', label: 'High', sub: 'Best detail' },
+  { id: 'xhigh', label: 'X-High', sub: '2.5 only · more detail' },
+  { id: 'max', label: 'Max', sub: '2.5 only · slowest, priciest' },
+];
+
+/** Fal-hosted GPT Image 2.5 (Flare / Sunburst). */
+export function isGptImage25(id: string): boolean {
+  return id.startsWith('openai/gpt-image-2.5/');
+}
+
+/** Models that accept the OpenAI `quality` parameter (direct gpt-image-2 + Fal GPT Image 2.5). */
+export function supportsQuality(id: string): boolean {
+  return id === 'gpt-image-2' || isGptImage25(id);
+}
+
+/** The quality tiers valid for a given model. */
+export function qualityOptions(id: string): QualityOption[] {
+  if (isGptImage25(id)) return OPENAI_QUALITY_OPTIONS;
+  if (id === 'gpt-image-2') return OPENAI_QUALITY_OPTIONS.filter((q) => q.id !== 'xhigh' && q.id !== 'max');
+  return [];
+}
 
 /** Providers that actually have models, in catalog order, for the grouped list. */
 export function providersWithModels(): Provider[] {

@@ -4,7 +4,7 @@ import { Upload, Loader, Plus, Download, Trash2, X, AtSign, Zap, Star, Check } f
 import PushToSchedulerButton from './PushToSchedulerButton';
 import InspirationWidget from './InspirationWidget';
 import ModelPicker from './ModelPicker';
-import { modelName, getModel, PROVIDER_MAP } from '../lib/modelCatalog';
+import { modelName, getModel, PROVIDER_MAP, supportsQuality, qualityOptions } from '../lib/modelCatalog';
 import { motion } from 'motion/react';
 import { useFirestoreAccounts, useFirestoreAccount } from '../hooks/useFirestore';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -47,12 +47,6 @@ const RESOLUTIONS = [
   { id: '1K', label: '1K', sub: 'Standard' },
   { id: '2K', label: '2K', sub: 'High-res' },
   { id: '4K', label: '4K', sub: 'Ultra · max detail' },
-];
-
-const OPENAI_QUALITIES = [
-  { id: 'low', label: 'Low', sub: 'Fast, cheap' },
-  { id: 'medium', label: 'Medium', sub: 'Balanced' },
-  { id: 'high', label: 'High', sub: 'Best detail' },
 ];
 
 const MAX_REFS = 8;
@@ -822,7 +816,7 @@ export default function Composer() {
         aspectRatio: targetRatio,
         thinkingLevel: tab.model === 'gemini-3.1-flash-image-preview' ? tab.thinkingLevel : '',
         resolution: tab.resolution,
-        ...(tab.model === 'gpt-image-2' ? { quality: tab.quality } : {}),
+        ...(supportsQuality(tab.model) ? { quality: tab.quality } : {}),
         references: relabeledForRequest,
       };
 
@@ -994,7 +988,7 @@ ${tab.quickAdjust.trim()}`;
       aspectRatio: tab.cachedPlan.targetRatio,
       thinkingLevel: tab.model === 'gemini-3.1-flash-image-preview' ? tab.thinkingLevel : '',
       resolution: tab.resolution,
-      ...(tab.model === 'gpt-image-2' ? { quality: tab.quality } : {}),
+      ...(supportsQuality(tab.model) ? { quality: tab.quality } : {}),
       references: relabeledForRequest,
     };
 
@@ -1245,7 +1239,7 @@ ${tab.quickAdjust.trim()}`;
       aspectRatio: tab.ratio,
       thinkingLevel: tab.model === 'gemini-3.1-flash-image-preview' ? tab.thinkingLevel : '',
       resolution: tab.resolution,
-      ...(tab.model === 'gpt-image-2' ? { quality: tab.quality } : {}),
+      ...(supportsQuality(tab.model) ? { quality: tab.quality } : {}),
       references: tab.references.map((r) => ({
         base64: r.base64,
         mimeType: r.mimeType,
@@ -2371,11 +2365,11 @@ ${tab.quickAdjust.trim()}`;
                     </p>
                   )}
                 </div>
-                {tab.model === 'gpt-image-2' && (
+                {supportsQuality(tab.model) && (
                   <div>
                     <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Quality</h3>
                     <div className="grid grid-cols-3 gap-1.5">
-                      {OPENAI_QUALITIES.map((q) => (
+                      {qualityOptions(tab.model).map((q) => (
                         <button
                           key={q.id}
                           onClick={() => setActiveField('quality', q.id)}
