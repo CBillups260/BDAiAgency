@@ -192,5 +192,17 @@ service cloud.firestore {
     match /craft_plans/{planId} {
       allow read, write: if hasAppAccess();
     }
+
+    // ── Client portals (passcode-gated public views) ──
+    // Managed only by the API (Admin SDK) so passcode hashes / session secrets
+    // never reach a browser. Team members may read the client edit log.
+    match /client_portals/{portalId} {
+      allow read, write: if false;
+    }
+
+    match /portal_edit_log/{editId} {
+      allow read: if hasAppAccess();
+      allow write: if false;
+    }
   }
 }

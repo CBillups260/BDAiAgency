@@ -23,6 +23,7 @@ import {
   type BusinessSettings,
 } from "../hooks/useFirestore";
 import type { User } from "firebase/auth";
+import ClientPortalsAdmin from "./ClientPortalsAdmin";
 
 interface SettingsProps {
   user: User;
@@ -503,6 +504,9 @@ export default function Settings({ user }: SettingsProps) {
           )}
         </div>
       </div>
+
+      {/* Client portals — phone review links */}
+      <ClientPortalsAdmin />
 
       {/* Bottom Save */}
       <div className="flex justify-end pb-8">

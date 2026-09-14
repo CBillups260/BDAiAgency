@@ -12,6 +12,7 @@ import socialRoutes from "./routes/social.js";
 import inspirationRoutes from "./routes/inspiration.js";
 import artDirectionRoutes from "./routes/artDirection.js";
 import creativeRoutes from "./routes/creative.js";
+import portalRoutes from "./routes/portal.js";
 
 /**
  * Paths that are hit by an external OAuth provider's browser redirect and
@@ -24,6 +25,8 @@ const OPEN_PATHS: RegExp[] = [
   // image-proxy is hit by browser <img> tags, which cannot send Authorization
   // headers. The route itself enforces a server-side host allowlist.
   /^\/api\/content\/image-proxy(?:\?.*)?$/,
+  // Client portal: passcode-gated (its own session token), no Firebase login.
+  /^\/api\/portal\/public\//,
 ];
 
 function maybeAuth(req: Request, res: Response, next: NextFunction): void {
@@ -55,6 +58,7 @@ export function createApp(): express.Express {
   app.use("/api/inspiration", inspirationRoutes);
   app.use("/api/art-direction", artDirectionRoutes);
   app.use("/api/creative", creativeRoutes);
+  app.use("/api/portal", portalRoutes);
 
   app.use(
     (

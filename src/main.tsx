@@ -1,8 +1,12 @@
-import {StrictMode} from 'react';
+import {StrictMode, Suspense, lazy} from 'react';
 import {createRoot} from 'react-dom/client';
-import {BrowserRouter} from 'react-router-dom';
+import {BrowserRouter, Routes, Route} from 'react-router-dom';
 import App from './App.tsx';
 import './index.css';
+
+// Client-facing portal (passcode, light theme, no team login). Loaded on demand
+// so it never touches the main app bundle's auth gate.
+const ClientPortal = lazy(() => import('./portal/ClientPortal.tsx'));
 
 console.log('[BDAi] main.tsx loaded — mounting React app');
 
@@ -10,7 +14,17 @@ try {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <BrowserRouter>
-        <App />
+        <Routes>
+          <Route
+            path="/p/:slug"
+            element={
+              <Suspense fallback={<div style={{minHeight: '100dvh', background: '#F4F5F7'}} />}>
+                <ClientPortal />
+              </Suspense>
+            }
+          />
+          <Route path="/*" element={<App />} />
+        </Routes>
       </BrowserRouter>
     </StrictMode>,
   );
