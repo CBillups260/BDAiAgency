@@ -30,7 +30,11 @@ const OPEN_PATHS: RegExp[] = [
 ];
 
 function maybeAuth(req: Request, res: Response, next: NextFunction): void {
-  if (OPEN_PATHS.some((p) => p.test(req.path))) {
+  // This middleware is mounted at "/api", so `req.path` arrives with that prefix
+  // stripped ("/portal/public/x"). Match against the full original path so the
+  // OPEN_PATHS patterns (written with the "/api" prefix) actually apply.
+  const fullPath = (req.originalUrl || req.url || "").split("?")[0];
+  if (OPEN_PATHS.some((p) => p.test(fullPath))) {
     next();
     return;
   }
