@@ -68,6 +68,9 @@ export default function ClientPortalsAdmin() {
     setLoadError(null);
     try {
       const res = await authedFetch("/api/portal/admin");
+      if (!(res.headers.get("content-type") || "").includes("application/json")) {
+        throw new Error("The portal API isn't deployed on this backend yet — run `npm run deploy:functions` and refresh.");
+      }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setPortals(data.portals || []);
@@ -292,8 +295,10 @@ export default function ClientPortalsAdmin() {
                 value={passcode}
                 onChange={(e) => setPasscode(e.target.value)}
                 type={showPasscode ? "text" : "password"}
-                inputMode="numeric"
-                placeholder="e.g. 4821"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="e.g. 4821 or shortys2026"
                 autoComplete="new-password"
                 className={`${inputClass} pr-11 font-mono`}
               />
@@ -301,7 +306,7 @@ export default function ClientPortalsAdmin() {
                 {showPasscode ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
             </div>
-            <p className="text-[10px] text-zinc-600 mt-1.5">Numbers are easiest on a phone. Changing it signs every phone out.</p>
+            <p className="text-[10px] text-zinc-600 mt-1.5">Letters and numbers both work and case doesn't matter. Changing it signs every phone out.</p>
           </div>
           <div>
             <label className={labelClass}>Brands ({selected.size} selected)</label>

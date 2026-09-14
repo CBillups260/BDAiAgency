@@ -98,7 +98,17 @@ interface PortalRequest extends Request {
 
 // ─── Passcode + session helpers ──────────────────────────────
 
+/** Passcodes may mix letters and numbers; case is ignored so a phone auto-capitalizing the first letter doesn't lock a client out. */
+function normalizePasscode(passcode: string): string {
+  return passcode.normalize("NFKC").trim().toLowerCase();
+}
+
 function hashPasscode(passcode: string, salt: string): string {
+  return crypto.scryptSync(normalizePasscode(passcode), salt, 32).toString("hex");
+}
+
+/** Portals created before passcodes were case-insensitive were hashed with the exact input. */
+function hashPasscodeLegacy(passcode: string, salt: string): string {
   return crypto.scryptSync(passcode.normalize("NFKC"), salt, 32).toString("hex");
 }
 
@@ -445,7 +455,10 @@ router.post("/public/:slug/auth", async (req, res, next) => {
     }
     const passcode = String((req.body as { passcode?: unknown })?.passcode ?? "").trim();
     if (!passcode) return res.status(400).json({ error: "Enter the passcode." });
-    const ok = portal.passcodeHash && safeEqual(hashPasscode(passcode, portal.passcodeSalt), portal.passcodeHash);
+    const ok =
+      portal.passcodeHash &&
+      (safeEqual(hashPasscode(passcode, portal.passcodeSalt), portal.passcodeHash) ||
+        safeEqual(hashPasscodeLegacy(passcode, portal.passcodeSalt), portal.passcodeHash));
     if (!ok) {
       recordFailedAttempt(key);
       return res.status(401).json({ error: "That passcode isn't right." });

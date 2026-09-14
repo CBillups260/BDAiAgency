@@ -416,11 +416,15 @@ function PasscodeScreen({ name, onSubmit }: { name: string; onSubmit: (code: str
         ref={inputRef}
         value={code}
         onChange={(e) => setCode(e.target.value)}
-        inputMode="numeric"
+        type="text"
+        inputMode="text"
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
         onKeyDown={(e) => {
           if (e.key === "Enter") void submit();
         }}
-        autoComplete="one-time-code"
+        autoComplete="off"
         enterKeyHint="go"
         placeholder="Passcode"
         aria-label="Passcode"
@@ -428,7 +432,7 @@ function PasscodeScreen({ name, onSubmit }: { name: string; onSubmit: (code: str
           width: "100%",
           fontSize: 26,
           textAlign: "center",
-          letterSpacing: code ? 8 : 0.2,
+          letterSpacing: !code ? 0.2 : /^\d+$/.test(code) ? 8 : 2,
           padding: "18px 16px",
           borderRadius: 18,
           border: `1.5px solid ${error ? T.danger : T.line}`,
