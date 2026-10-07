@@ -102,13 +102,17 @@ export const PROVIDER_MAP: Record<string, Provider> = Object.fromEntries(
  */
 export const MODELS: CatalogModel[] = [
   // ─────────────── Google (direct Gemini + Fal Nano Banana) ───────────────
+  // `maxRes` must match what the endpoint can actually deliver: only the
+  // Pro / 2 / 2.1 tiers expose a `resolution` enum, so the Lite and plain
+  // Nano Banana / Gemini Flash endpoints top out at their native ~1K.
   { id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro', provider: 'google', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'editing'], features: ['refs', 'hires'], featured: true, direct: true, tier: 3 },
   { id: 'gemini-3.1-flash-image-preview', name: 'Gemini 3.1 Flash', provider: 'google', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'fast', 'editing'], features: ['refs', 'hires'], direct: true, tier: 2 },
+  { id: 'google/nano-banana-2.1', name: 'Nano Banana 2.1', provider: 'google', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'editing', 'typography'], features: ['refs', 'hires'], isNew: true, featured: true, tier: 3 },
   { id: 'fal-ai/nano-banana-pro', name: 'Nano Banana Pro', provider: 'google', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'editing'], features: ['refs', 'hires'], isNew: true, featured: true, tier: 3 },
   { id: 'fal-ai/nano-banana-2', name: 'Nano Banana 2', provider: 'google', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'editing'], features: ['refs', 'hires'], isNew: true, tier: 3 },
-  { id: 'google/nano-banana-2-lite', name: 'Nano Banana 2 Lite', provider: 'google', refs: 'multi', maxRes: '2K', bestFor: ['fast', 'editing'], features: ['refs'], isNew: true, tier: 2 },
-  { id: 'fal-ai/nano-banana', name: 'Nano Banana', provider: 'google', refs: 'multi', maxRes: '2K', bestFor: ['editing', 'photoreal'], features: ['refs'], tier: 2 },
-  { id: 'fal-ai/gemini-25-flash-image', name: 'Gemini 2.5 Flash Image', provider: 'google', refs: 'multi', maxRes: '2K', bestFor: ['fast', 'editing'], features: ['refs'], tier: 2 },
+  { id: 'google/nano-banana-2-lite', name: 'Nano Banana 2 Lite', provider: 'google', refs: 'multi', maxRes: '1K', bestFor: ['fast', 'editing'], features: ['refs'], isNew: true, tier: 2 },
+  { id: 'fal-ai/nano-banana', name: 'Nano Banana', provider: 'google', refs: 'multi', maxRes: '1K', bestFor: ['editing', 'photoreal'], features: ['refs'], tier: 2 },
+  { id: 'fal-ai/gemini-25-flash-image', name: 'Gemini 2.5 Flash Image', provider: 'google', refs: 'multi', maxRes: '1K', bestFor: ['fast', 'editing'], features: ['refs'], tier: 2 },
 
   // ─────────────── OpenAI ───────────────
   // GPT Image 2.5 (Sept 2026) ships as two Fal-hosted variants. Flare = default

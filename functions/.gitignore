@@ -1,5 +1,7 @@
 node_modules/
-lib/
+# Build output only — anchored so it does not also swallow `src/lib/`,
+# which is source code (an unanchored `lib/` matched it at every depth).
+/lib/
 *.log
 .env
 .env.local
