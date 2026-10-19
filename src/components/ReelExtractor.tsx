@@ -14,11 +14,13 @@ import {
   AlertCircle,
   Play,
   Edit3,
+  Scissors,
 } from '@geist-ui/icons';
 import { motion } from 'motion/react';
 import ReelBrander from './ReelBrander';
+import VideoTimelineEditor from './VideoTimelineEditor';
 
-type Platform = 'facebook' | 'instagram' | 'tiktok';
+type Platform = 'facebook' | 'instagram' | 'tiktok' | 'youtube';
 
 interface ExtractDownload {
   quality: string;
@@ -37,6 +39,9 @@ interface ExtractResult {
   width: number | null;
   height: number | null;
   downloads: ExtractDownload[];
+  durationSeconds?: number | null;
+  /** Present when metadata came back but the file itself can't be fetched. */
+  note?: string;
 }
 
 const DEFAULT_ASPECT = 9 / 16;
@@ -68,6 +73,7 @@ const PLATFORMS: Record<Platform, { label: string; color: string }> = {
   facebook: { label: 'Facebook', color: '#1877F2' },
   instagram: { label: 'Instagram', color: '#E4405F' },
   tiktok: { label: 'TikTok', color: '#25F4EE' },
+  youtube: { label: 'YouTube', color: '#FF0000' },
 };
 
 /** Client-side platform hint — instant feedback before we hit the server. */
@@ -81,6 +87,15 @@ function detectPlatform(raw: string): Platform | null {
   if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) return 'tiktok';
   if (host === 'instagram.com' || host.endsWith('.instagram.com') || host === 'instagr.am') return 'instagram';
   if (host === 'facebook.com' || host.endsWith('.facebook.com') || host === 'fb.watch' || host === 'fb.me') return 'facebook';
+  if (
+    host === 'youtube.com' ||
+    host.endsWith('.youtube.com') ||
+    host === 'youtu.be' ||
+    host === 'youtube-nocookie.com' ||
+    host.endsWith('.youtube-nocookie.com')
+  ) {
+    return 'youtube';
+  }
   return null;
 }
 
@@ -99,6 +114,7 @@ export default function ReelExtractor() {
   const [downloading, setDownloading] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [branding, setBranding] = useState(false);
+  const [editing, setEditing] = useState(false);
   // Aspect ratio measured from the thumbnail — the fallback when the API
   // doesn't report native video dimensions.
   const [measuredAspect, setMeasuredAspect] = useState<number | null>(null);
@@ -115,13 +131,15 @@ export default function ReelExtractor() {
     const u = url.trim();
     if (!u || loading) return;
     if (!detectPlatform(u)) {
-      setError('Paste a Facebook, Instagram, or TikTok video / reel link.');
+      setError('Paste a Facebook, Instagram, TikTok, or YouTube video link.');
       return;
     }
     setLoading(true);
     setError(null);
     setResult(null);
     setMeasuredAspect(null);
+    setEditing(false);
+    setBranding(false);
     try {
       const res = await authedFetch(`/api/social/extract?url=${encodeURIComponent(u)}`);
       if (!res.ok) {
@@ -195,8 +213,8 @@ export default function ReelExtractor() {
           <h3 className="text-sm font-medium text-zinc-300 uppercase tracking-wider">Reel Extractor</h3>
         </div>
         <p className="text-zinc-500 text-xs mb-4">
-          Paste any Facebook, Instagram, or TikTok video / reel link — we'll detect the platform and pull the
-          downloadable video.
+          Paste any Facebook, Instagram, TikTok, or YouTube link — we'll detect the platform, pull the
+          downloadable video, and let you trim it before export.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-2">
@@ -343,6 +361,13 @@ export default function ReelExtractor() {
                 </div>
               )}
 
+              {!result.downloads.length && result.note && (
+                <div className="flex items-start gap-2 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3 text-xs text-amber-200">
+                  <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                  <span>{result.note}</span>
+                </div>
+              )}
+
               <div>
                 <p className="text-[11px] text-zinc-500 uppercase tracking-wider mb-2">Download</p>
                 <div className="flex flex-wrap gap-2">
@@ -372,6 +397,25 @@ export default function ReelExtractor() {
               </div>
             </div>
           </div>
+
+          {/* Trim / cut before export */}
+          {result.downloads.length > 0 && (
+            <div className="mt-5">
+              <button
+                onClick={() => setEditing((v) => !v)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border border-emerald-500/30 text-emerald-200 hover:bg-emerald-500/10 transition-all"
+              >
+                <Scissors size={14} /> {editing ? 'Close timeline editor' : 'Edit timeline — trim & cut'}
+              </button>
+            </div>
+          )}
+          {editing && result.downloads.length > 0 && (
+            <VideoTimelineEditor
+              videoUrl={(result.downloads.find((d) => d.recommended) || result.downloads[0]).url}
+              duration={result.durationSeconds ?? null}
+              defaultName={`${result.platform}-${result.author || 'clip'}`}
+            />
+          )}
 
           {/* Brand it → quick on-brand cover image from the reel frame */}
           {result.thumbnail && (

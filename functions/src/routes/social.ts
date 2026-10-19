@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import ffmpegStatic from "ffmpeg-static";
+import { ytDlpUnavailableReason, ytProbe, ytDownload, type YtProbe } from "../lib/ytdlp.js";
 
 const router = Router();
 
@@ -188,7 +189,7 @@ router.get("/twitter/:username", async (req, res) => {
 // response down to the bits the UI cares about: a caption, a thumbnail, some
 // stats, and one or more downloadable MP4 URLs.
 
-type ExtractPlatform = "facebook" | "instagram" | "tiktok";
+type ExtractPlatform = "facebook" | "instagram" | "tiktok" | "youtube";
 
 interface ExtractDownload {
   quality: string; // "HD", "SD", "No watermark", "Original", ...
@@ -207,6 +208,10 @@ interface ExtractResult {
   width: number | null; // native video pixel width, when the API reports it
   height: number | null; // native video pixel height
   downloads: ExtractDownload[];
+  /** Runtime in seconds when known — the timeline editor needs it up front. */
+  durationSeconds?: number | null;
+  /** Set when we could read the metadata but not offer the file (see ytdlp.ts). */
+  note?: string;
 }
 
 /**
@@ -238,6 +243,17 @@ function detectPlatform(rawUrl: string): ExtractPlatform | null {
   if (host === "tiktok.com" || host.endsWith(".tiktok.com")) return "tiktok"; // incl. vm./vt.
   if (host === "instagram.com" || host.endsWith(".instagram.com") || host === "instagr.am") return "instagram";
   if (host === "facebook.com" || host.endsWith(".facebook.com") || host === "fb.watch" || host === "fb.me") return "facebook";
+  // Covers watch URLs, /shorts/, /live/, youtu.be short links, m. and music.
+  // subdomains, and the privacy-preserving nocookie host.
+  if (
+    host === "youtube.com" ||
+    host.endsWith(".youtube.com") ||
+    host === "youtu.be" ||
+    host === "youtube-nocookie.com" ||
+    host.endsWith(".youtube-nocookie.com")
+  ) {
+    return "youtube";
+  }
   return null;
 }
 
@@ -250,6 +266,7 @@ const TRACKING_PARAMS = new Set([
   "comment_id", "reply_comment_id", "notif_id", "notif_t",
   "igsh", "igshid", "img_index", // instagram
   "is_from_webapp", "sender_device", "web_id", "_r", "_t", // tiktok
+  "si", "pp", "feature", "ab_channel", "app", "start_radio", // youtube
   "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
 ]);
 
@@ -303,12 +320,71 @@ router.get("/extract", async (req, res) => {
     const platform = detectPlatform(url);
     if (!platform) {
       return res.status(400).json({
-        error: "Unrecognized link. Paste a Facebook, Instagram, or TikTok video / reel URL.",
+        error: "Unrecognized link. Paste a Facebook, Instagram, TikTok, or YouTube video URL.",
       });
     }
 
     const cleaned = cleanUrl(url);
     let result: ExtractResult;
+
+    if (platform === "youtube") {
+      // Metadata comes from ScrapeCreators so YouTube reads like the other
+      // three platforms. The file does not — see functions/src/lib/ytdlp.ts for
+      // why their download options are unusable — so the quality list is
+      // whatever yt-dlp reports, and each entry carries the watch URL for
+      // /download to resolve.
+      const data = await scGet(`/v1/youtube/video?url=${encodeURIComponent(cleaned)}`);
+
+      const blocked = await ytDlpUnavailableReason();
+      let probe: YtProbe | null = null;
+      let probeError: string | null = blocked;
+      if (!blocked) {
+        try {
+          probe = await ytProbe(cleaned);
+        } catch (e: any) {
+          probeError = e?.message || "Could not read that video's formats.";
+        }
+      }
+
+      const downloads: ExtractDownload[] = [];
+      if (probe) {
+        // Offer the native height plus the usual rungs below it, so a 4K source
+        // still gives a sane 1080p pick without a huge file.
+        const native = probe.heights[0] ?? 0;
+        const rungs = [native, 1080, 720, 480].filter(
+          (h, i, arr) => h > 0 && h <= native && arr.indexOf(h) === i,
+        );
+        for (const h of rungs) {
+          downloads.push({
+            quality: `${h}p`,
+            url: `${cleaned}#h=${h}`,
+            recommended: h === Math.min(native, 1080),
+          });
+        }
+      }
+
+      const durationMs = Number(data.durationMs);
+      result = {
+        platform,
+        sourceUrl: url,
+        caption: data.title || probe?.title || "",
+        thumbnail: data.thumbnail || probe?.thumbnail || null,
+        author: data.channel?.title || data.channel?.handle || probe?.uploader || null,
+        views: Number(data.viewCountInt) || probe?.viewCount || 0,
+        likes: Number(data.likeCountInt) || probe?.likeCount || 0,
+        width: probe?.width ?? null,
+        height: probe?.height ?? null,
+        downloads,
+        durationSeconds: Number.isFinite(durationMs)
+          ? Math.round(durationMs / 1000)
+          : (probe?.durationSeconds ?? null),
+        ...(downloads.length ? {} : { note: probeError || undefined }),
+      };
+
+      // Metadata-only is still a useful answer for YouTube (title, duration,
+      // channel, stats), so return 200 with a note rather than erroring out.
+      return res.json(result);
+    }
 
     if (platform === "facebook") {
       const data = await scGet(`/v1/facebook/post?url=${encodeURIComponent(cleaned)}`);
@@ -426,6 +502,21 @@ const DOWNLOAD_HOST_ALLOW = [
   "akamaized.net",
 ];
 
+
+/**
+ * /extract encodes the picked quality as a fragment on the watch URL
+ * (`https://youtu.be/ID#h=1080`). Split it back into a clean URL plus a height
+ * cap; a missing or junk fragment means "best available".
+ */
+function splitYoutubeTarget(raw: string): { watchUrl: string; height: number } {
+  const hash = raw.indexOf("#");
+  if (hash === -1) return { watchUrl: raw, height: 0 };
+  const watchUrl = raw.slice(0, hash);
+  const m = /h=(\d{3,4})/.exec(raw.slice(hash + 1));
+  const height = m ? Number(m[1]) : 0;
+  return { watchUrl, height: Number.isFinite(height) ? height : 0 };
+}
+
 /**
  * Force-download proxy. Browsers ignore the `download` attribute on cross-origin
  * CDN links (they navigate/stream instead), so we fetch the MP4 server-side and
@@ -438,6 +529,23 @@ router.get("/download", async (req, res) => {
     const url = ((req.query.url as string) || "").trim();
     const filename = ((req.query.filename as string) || "reel.mp4").replace(/[^a-zA-Z0-9._-]/g, "_");
     if (!url) return res.status(400).json({ error: "url param required" });
+
+    // YouTube has no fetchable CDN URL — /extract hands back the watch URL with
+    // the chosen height in the fragment, and yt-dlp fetches it here.
+    if (detectPlatform(url) === "youtube") {
+      const { watchUrl, height } = splitYoutubeTarget(url);
+      const tmp = path.join(os.tmpdir(), `bdai-yt-${randomUUID()}.mp4`);
+      try {
+        await ytDownload(watchUrl, tmp, height);
+        const buf = await fs.readFile(tmp);
+        res.setHeader("Content-Type", "video/mp4");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader("Content-Length", String(buf.length));
+        return res.send(buf);
+      } finally {
+        await fs.unlink(tmp).catch(() => {});
+      }
+    }
 
     let host = "";
     try {
@@ -585,6 +693,173 @@ router.post("/brand-video", async (req, res) => {
     res.status(500).json({ error: err?.message || "Failed to brand the video." });
   } finally {
     await Promise.allSettled([fs.unlink(inPath), fs.unlink(ovPath), fs.unlink(outPath)]);
+  }
+});
+
+// ─── Timeline Trim / Cut (server-side ffmpeg) ────────────
+//
+// The editor sends the segments it wants to KEEP, in order. One segment is a
+// plain trim; several are the result of cutting chunks out of the middle, and
+// they get concatenated back together. Doing it in a single filter_complex
+// pass keeps the cuts frame-accurate (a stream-copy `-ss` would snap to the
+// nearest keyframe and drift by up to a couple of seconds).
+
+/**
+ * Does this file have an audio track? `ffmpeg -i` with no output always exits
+ * non-zero, so we read stderr and ignore the exit code. Videos without audio
+ * are common (silent screen recordings, some TikToks), and asking the concat
+ * filter for an audio stream that does not exist fails the whole render.
+ */
+function probeHasAudio(inPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!ffmpegPath) return resolve(false);
+    const proc = spawn(ffmpegPath, ["-hide_banner", "-i", inPath], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    proc.stderr?.on("data", (d: Buffer) => {
+      stderr += d.toString();
+    });
+    proc.on("error", () => resolve(false));
+    proc.on("close", () => resolve(/Stream #\d+:\d+.*: Audio:/.test(stderr)));
+  });
+}
+
+interface TrimSegment {
+  start: number;
+  end: number;
+}
+
+/**
+ * Validate and normalize the keep-list: drop anything non-finite, inverted or
+ * shorter than a frame or two, clamp into the clip, sort, and merge overlaps.
+ * Returns null when nothing usable survives.
+ */
+function normalizeSegments(raw: unknown, duration: number | null): TrimSegment[] | null {
+  if (!Array.isArray(raw) || !raw.length) return null;
+  const max = duration && duration > 0 ? duration : Number.MAX_SAFE_INTEGER;
+
+  const cleaned = raw
+    .map((seg: any) => ({
+      start: Math.max(0, Number(seg?.start)),
+      end: Math.min(max, Number(seg?.end)),
+    }))
+    .filter(
+      (seg) =>
+        Number.isFinite(seg.start) && Number.isFinite(seg.end) && seg.end - seg.start >= 0.05,
+    )
+    .sort((a, b) => a.start - b.start);
+
+  if (!cleaned.length) return null;
+
+  const merged: TrimSegment[] = [cleaned[0]];
+  for (const seg of cleaned.slice(1)) {
+    const prev = merged[merged.length - 1];
+    if (seg.start <= prev.end + 0.001) prev.end = Math.max(prev.end, seg.end);
+    else merged.push(seg);
+  }
+  return merged.slice(0, MAX_TRIM_SEGMENTS);
+}
+
+const MAX_TRIM_SEGMENTS = 20;
+
+router.post("/trim", async (req, res) => {
+  const { videoUrl, segments, filename, duration } = (req.body || {}) as {
+    videoUrl?: string;
+    segments?: unknown;
+    filename?: string;
+    duration?: number;
+  };
+
+  if (!videoUrl) return res.status(400).json({ error: "videoUrl is required." });
+
+  const keep = normalizeSegments(segments, Number(duration) || null);
+  if (!keep) {
+    return res.status(400).json({ error: "Select at least one segment to keep." });
+  }
+
+  const dir = os.tmpdir();
+  const id = randomUUID();
+  const inPath = path.join(dir, `bdai-trim-in-${id}.mp4`);
+  const outPath = path.join(dir, `bdai-trim-out-${id}.mp4`);
+  const safeName = (filename || "trimmed.mp4").replace(/[^a-zA-Z0-9._-]/g, "_");
+
+  try {
+    // 1. Get the source onto disk — yt-dlp for YouTube, allow-listed CDN fetch
+    //    for everything else.
+    if (detectPlatform(videoUrl) === "youtube") {
+      const { watchUrl, height } = splitYoutubeTarget(videoUrl);
+      await ytDownload(watchUrl, inPath, height);
+    } else {
+      let host = "";
+      try {
+        host = new URL(videoUrl).hostname.toLowerCase();
+      } catch {
+        return res.status(400).json({ error: "Invalid videoUrl." });
+      }
+      if (!DOWNLOAD_HOST_ALLOW.some((h) => host === h || host.endsWith("." + h))) {
+        return res.status(403).json({ error: "Video host not allowed." });
+      }
+      const upstream = await fetch(videoUrl);
+      if (!upstream.ok) {
+        return res
+          .status(502)
+          .json({ error: `Could not fetch the source video (HTTP ${upstream.status}).` });
+      }
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      if (buf.length > MAX_VIDEO_BYTES) {
+        return res.status(413).json({ error: "That video is too large to edit (over 120MB)." });
+      }
+      await fs.writeFile(inPath, buf);
+    }
+
+    // 2. One trim pair per kept segment, concatenated in order.
+    const hasAudio = await probeHasAudio(inPath);
+    const parts: string[] = [];
+    const labels: string[] = [];
+    keep.forEach((seg, i) => {
+      parts.push(
+        `[0:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`,
+      );
+      labels.push(`[v${i}]`);
+      if (hasAudio) {
+        parts.push(
+          `[0:a]atrim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`,
+        );
+        labels.push(`[a${i}]`);
+      }
+    });
+    const concat = hasAudio
+      ? `${labels.join("")}concat=n=${keep.length}:v=1:a=1[outv][outa]`
+      : `${labels.join("")}concat=n=${keep.length}:v=1:a=0[outv]`;
+
+    const args = [
+      "-y",
+      "-i", inPath,
+      "-filter_complex", `${parts.join(";")};${concat}`,
+      "-map", "[outv]",
+    ];
+    if (hasAudio) args.push("-map", "[outa]", "-c:a", "aac", "-b:a", "128k");
+    args.push(
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-crf", "20",
+      "-pix_fmt", "yuv420p",
+      "-movflags", "+faststart",
+      outPath,
+    );
+    await runFfmpeg(args);
+
+    const out = await fs.readFile(outPath);
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+    res.setHeader("Content-Length", String(out.length));
+    res.send(out);
+  } catch (err: any) {
+    console.error("Trim video error:", err?.message);
+    res.status(500).json({ error: err?.message || "Failed to export the edit." });
+  } finally {
+    await Promise.allSettled([fs.unlink(inPath), fs.unlink(outPath)]);
   }
 });
 
