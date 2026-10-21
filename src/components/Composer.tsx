@@ -4,7 +4,8 @@ import { Upload, Loader, Plus, Download, Trash2, X, AtSign, Zap, Star, Check } f
 import PushToSchedulerButton from './PushToSchedulerButton';
 import InspirationWidget from './InspirationWidget';
 import ModelPicker from './ModelPicker';
-import { modelName, getModel, PROVIDER_MAP, supportsQuality, qualityOptions } from '../lib/modelCatalog';
+import { modelName, getModel, PROVIDER_MAP, supportsQuality, qualityOptions, isOpenAIModel } from '../lib/modelCatalog';
+import { STYLE_RULES, buildStyleRulesSuffix } from '../lib/styleRules';
 import { motion } from 'motion/react';
 import { useFirestoreAccounts, useFirestoreAccount } from '../hooks/useFirestore';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -113,6 +114,14 @@ interface ComposerTab {
   jsonSpec: boolean;
   /** Auto-strip AI "Made with AI" metadata (C2PA/EXIF/XMP) from every generation. */
   stripMetadata: boolean;
+  /**
+   * OpenAI-only layout constraints. GPT Image loves to "helpfully" add rule
+   * lines, underline headings, and crowd a layout with ornament; these append
+   * explicit negative instructions to the prompt. See STYLE_RULES.
+   */
+  noDividers: boolean;
+  noUnderlines: boolean;
+  minimalDesign: boolean;
   customW: string;
   customH: string;
   generating: boolean;
@@ -130,6 +139,13 @@ interface ComposerTab {
 }
 
 const nextTabId = () => `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+/** Thin wrapper so the prompt paths can pass a whole tab. */
+function styleRulesSuffix(tab: ComposerTab): string {
+  return buildStyleRulesSuffix(tab.model, tab);
+}
+
+
 
 const createDefaultTab = (overrides: Partial<ComposerTab> = {}): ComposerTab => ({
   id: nextTabId(),
@@ -149,6 +165,9 @@ const createDefaultTab = (overrides: Partial<ComposerTab> = {}): ComposerTab => 
   qaReview: true,
   jsonSpec: false,
   stripMetadata: true,
+  noDividers: false,
+  noUnderlines: false,
+  minimalDesign: false,
   customW: '',
   customH: '',
   generating: false,
@@ -176,6 +195,9 @@ const inheritSettings = (from: ComposerTab): Partial<ComposerTab> => ({
   qaReview: from.qaReview,
   jsonSpec: from.jsonSpec,
   stripMetadata: from.stripMetadata,
+  noDividers: from.noDividers,
+  noUnderlines: from.noUnderlines,
+  minimalDesign: from.minimalDesign,
   customW: from.customW,
   customH: from.customH,
 });
@@ -812,7 +834,7 @@ export default function Composer() {
           : '';
       const body = {
         model: tab.model,
-        prompt: builtPrompt + specSuffix,
+        prompt: builtPrompt + specSuffix + styleRulesSuffix(tab),
         aspectRatio: targetRatio,
         thinkingLevel: tab.model === 'gemini-3.1-flash-image-preview' ? tab.thinkingLevel : '',
         resolution: tab.resolution,
@@ -984,7 +1006,7 @@ ${tab.quickAdjust.trim()}`;
 
     const body = {
       model: tab.model,
-      prompt: adjustedPrompt,
+      prompt: adjustedPrompt + styleRulesSuffix(tab),
       aspectRatio: tab.cachedPlan.targetRatio,
       thinkingLevel: tab.model === 'gemini-3.1-flash-image-preview' ? tab.thinkingLevel : '',
       resolution: tab.resolution,
@@ -1235,7 +1257,7 @@ ${tab.quickAdjust.trim()}`;
 
     const body = {
       model: tab.model,
-      prompt: finalPrompt,
+      prompt: finalPrompt + styleRulesSuffix(tab),
       aspectRatio: tab.ratio,
       thinkingLevel: tab.model === 'gemini-3.1-flash-image-preview' ? tab.thinkingLevel : '',
       resolution: tab.resolution,
@@ -2382,6 +2404,39 @@ ${tab.quickAdjust.trim()}`;
                         </button>
                       ))}
                     </div>
+                  </div>
+                )}
+                {isOpenAIModel(tab.model) && (
+                  <div>
+                    <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Style rules</h3>
+                    <div className="space-y-1.5">
+                      {STYLE_RULES.map((r) => (
+                        <label
+                          key={r.key}
+                          className={`flex items-start gap-2.5 px-3 py-2.5 rounded-xl border cursor-pointer transition-all ${
+                            tab[r.key]
+                              ? 'bg-purple-500/10 border-purple-500/30'
+                              : 'border-[#27273A] bg-[#0A0A0F] hover:border-zinc-600'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={tab[r.key]}
+                            onChange={(e) => setActiveField(r.key, e.target.checked)}
+                            className="mt-0.5 w-4 h-4 shrink-0 accent-purple-500"
+                          />
+                          <span className="min-w-0">
+                            <span className={`block text-[11px] font-semibold ${tab[r.key] ? 'text-purple-300' : 'text-zinc-300'}`}>
+                              {r.label}
+                            </span>
+                            <span className="block text-[9px] text-zinc-500 leading-tight">{r.sub}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-zinc-600 mt-2">
+                      Added to the prompt as hard constraints — OpenAI models add rules, underlines and ornament unless told not to.
+                    </p>
                   </div>
                 )}
               </div>

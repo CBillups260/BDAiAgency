@@ -236,6 +236,15 @@ export function isGptImage25(id: string): boolean {
   return id.startsWith('openai/gpt-image-2.5/');
 }
 
+/**
+ * Any OpenAI image model, direct or Fal-hosted. Broader than `supportsQuality`
+ * — GPT Image 1 has no quality ladder but is still an OpenAI model, and the
+ * composer's OpenAI-only style rules apply to it too.
+ */
+export function isOpenAIModel(id: string): boolean {
+  return getModel(id)?.provider === 'openai';
+}
+
 /** Models that accept the OpenAI `quality` parameter (direct gpt-image-2 + Fal GPT Image 2.5). */
 export function supportsQuality(id: string): boolean {
   return id === 'gpt-image-2' || isGptImage25(id);
