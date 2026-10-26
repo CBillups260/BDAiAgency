@@ -496,6 +496,7 @@ router.post("/generate-asset", async (req, res) => {
       quality: rawQuality,
       detailPreset = "",
       detailChips = [],
+      removePeople = false,
     } = req.body as {
       dishName?: string;
       model?: string;
@@ -518,6 +519,7 @@ router.post("/generate-asset", async (req, res) => {
       quality?: string;
       detailPreset?: string;
       detailChips?: string[];
+      removePeople?: boolean;
     };
 
     const selectedModel =
@@ -988,6 +990,41 @@ ${dishName.trim() ? `The subject is: ${dishName.trim()}.` : ""}`;
       } else {
         prompt += `\n\nSUBJECT ROTATION (apply last): Re-orient ONLY the subject — ${dish}, together with the plate, basket, or vessel it directly sits in or on — turning it in place by ${rotationDeg} degrees clockwise, as if the physical item were picked up and set back down at a new angle on the same spot. Do NOT tilt, roll, or rotate the overall image or the scene: the camera position, framing, crop, horizon, background, surrounding table/surface, napkins, props, and lighting must all stay EXACTLY the same and perfectly level. Only the subject's facing/orientation changes. Re-render the subject convincingly at the new angle with correct perspective, foreshortening, shadows, and contact with the surface, and keep the whole frame naturally filled — no empty space where the subject used to be.`;
       }
+    }
+
+    // ── NO PEOPLE (appended last) ───────────────────────────
+    // Optional hard constraint, phrased per path. An enhance pass is editing a
+    // real photo, so it has to erase people already in frame AND heal what was
+    // behind them; a from-scratch generation only has to not add any.
+    //
+    // This sits last, after the rotation block, because it is the constraint
+    // most easily lost: a plain "no people" still leaves uniformed staff in
+    // open kitchens and figures in deep background (verified — a test render of
+    // a "busy restaurant" emptied every table but kept the chefs at the pass).
+    // Hence the explicit enumeration of staff and the whole-depth sweep.
+    if (removePeople) {
+      prompt += isEnhanceMode
+        ? "\n\nREMOVE PEOPLE — HIGHEST PRIORITY, OVERRIDES EVERYTHING ABOVE: The final image " +
+          "must contain ZERO human beings anywhere in the frame, at any depth or size. This " +
+          "includes staff as well as customers: chefs, cooks, servers, bartenders, baristas, " +
+          "cashiers, and anyone working behind a counter, pass, bar, or open kitchen; anyone " +
+          "partially in frame, cropped at an edge, out of focus, tiny, or far in the background; " +
+          "stray hands, arms, legs, and faces; people visible through windows or doorways; and " +
+          "human reflections or silhouettes in glass, metal, mirrors, or polished surfaces. " +
+          "Reconstruct whatever was behind each person by continuing the existing background, " +
+          "surface, and lighting seamlessly — no blur patches, smears, ghosts, mannequin-like " +
+          "shapes, or empty holes where a person was. Everything else (the subject, props, " +
+          "framing, lighting, and color palette) stays exactly as it is. Before finishing, scan " +
+          "the entire frame including the deepest background and confirm not one person remains."
+        : "\n\nNO PEOPLE — HIGHEST PRIORITY, OVERRIDES EVERYTHING ABOVE: The image must contain " +
+          "ZERO human beings anywhere in the frame, at any depth or size. This includes staff as " +
+          "well as customers: no chefs, cooks, servers, bartenders, baristas, cashiers, or " +
+          "workers behind any counter, pass, bar, or open kitchen; no figures in the deep " +
+          "background, through windows, or in doorways; no cropped or partial people at the " +
+          "edges; no hands, arms, legs, or faces; and no human reflections or silhouettes in " +
+          "glass, metal, mirrors, or polished surfaces. The space must read as completely " +
+          "unoccupied. Before finishing, scan the entire frame including the deepest background " +
+          "and confirm not one person is present.";
     }
 
     const images: { base64: string; mimeType: string }[] = [];

@@ -480,6 +480,9 @@ export default function AssetCreator() {
   // Results
   const [generating, setGenerating] = useState(false);
   const [count, setCount] = usePersistedState<number>('asset.count', 1);
+  // Hard "no people" constraint on the prompt. Erases anyone already in a
+  // reference photo on the enhance path; keeps them out on the generate path.
+  const [removePeople, setRemovePeople] = usePersistedState<boolean>('asset.removePeople', false);
   const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
   const [assets, setAssets] = usePersistedState<GeneratedAsset[]>('asset.assets', []);
@@ -614,6 +617,7 @@ export default function AssetCreator() {
       referenceImage: refImage ? { base64: refImage.base64, mimeType: refImage.mimeType } : undefined,
       detailPreset,
       detailChips,
+      removePeople,
     };
 
     type ReqResult = { ok: true; images: any[] } | { ok: false; error: string };
@@ -1901,6 +1905,26 @@ export default function AssetCreator() {
                 ))}
               </div>
             </div>
+            {/* Remove people — hard negative, applied to both the enhance and generate paths */}
+            <button
+              onClick={() => setRemovePeople(!removePeople)}
+              className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border transition-all ${
+                removePeople ? 'bg-purple-500/15 border-purple-500/40' : 'border-[#27273A] bg-[#0A0A0F]'
+              }`}
+              title="Keep people out of the shot. On an uploaded photo this erases anyone in frame \u2014 including stray hands, background figures, and reflections \u2014 and rebuilds the background behind them."
+            >
+              <span className="flex flex-col text-left">
+                <span className={`text-[11px] font-medium ${removePeople ? 'text-purple-200' : 'text-zinc-400'}`}>
+                  Remove people
+                </span>
+                <span className="text-[9px] text-zinc-500">
+                  {refImage ? 'Erases people + rebuilds background' : 'No figures, hands or reflections'}
+                </span>
+              </span>
+              <span className={`w-7 h-4 rounded-full relative shrink-0 transition-colors ${removePeople ? 'bg-purple-500/60' : 'bg-zinc-700'}`}>
+                <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${removePeople ? 'left-3.5' : 'left-0.5'}`} />
+              </span>
+            </button>
             {/* Strip AI metadata — auto-removes the C2PA/EXIF "Made with AI" tag from every generation */}
             <button
               onClick={() => setStripMetadata(!stripMetadata)}
