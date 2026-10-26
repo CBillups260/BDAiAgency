@@ -404,6 +404,8 @@ interface GeneratedAsset {
   timestamp: number;
   /** True once the visible watermark / AI metadata has been stripped in place. */
   cleaned?: boolean;
+  /** True once the C2PA/EXIF/XMP "Made with AI" provenance has been dropped. */
+  metaStripped?: boolean;
 }
 
 // ─── Component ───────────────────────────────────────────
@@ -484,6 +486,12 @@ export default function AssetCreator() {
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   // Assets currently being cleaned by the watermark remover, keyed by timestamp.
   const [cleaningAssets, setCleaningAssets] = useState<Record<number, boolean>>({});
+  // Auto metadata strip — on by default, same as the Composer.
+  const [stripMetadata, setStripMetadata] = usePersistedState<boolean>('asset.stripMetadata', true);
+  // Timestamps already handed to the auto-stripper this session. Assets persist
+  // via usePersistedState, so without this a permanently-failing strip would be
+  // retried on every render; the ref clears on reload, which re-attempts once.
+  const autoStripRef = useRef<Set<number>>(new Set());
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeBg = customBg || bgColor;
@@ -704,9 +712,17 @@ export default function AssetCreator() {
       if (!cleaned) throw new Error('No image returned');
       setAssets(prev => prev.map(a =>
         a.timestamp === asset.timestamp
-          ? { ...a, base64: cleaned.base64, mimeType: cleaned.mimeType || 'image/png', cleaned: true }
+          ? {
+              ...a,
+              base64: cleaned.base64,
+              mimeType: cleaned.mimeType || 'image/png',
+              cleaned: true,
+              metaStripped: true,
+            }
           : a,
       ));
+      // A full clean covers the metadata too — keep the auto-stripper off it.
+      autoStripRef.current.add(asset.timestamp);
     } catch (e: any) {
       setError(e.message || 'Watermark removal failed');
     } finally {
@@ -717,6 +733,60 @@ export default function AssetCreator() {
       });
     }
   };
+
+  /**
+   * Auto metadata strip — the Composer's background pass, applied to every asset
+   * this tab generates. With "Strip AI metadata" on, drop the C2PA / EXIF / XMP
+   * "Made with AI" provenance so platforms don't auto-label the image.
+   *
+   * Metadata only (removeSparkle:false), which is lossless and CPU-only (~250ms)
+   * — the pixels are untouched, so this never degrades an enhanced photo. The
+   * visible sparkle still needs the explicit "Remove Watermark" button. Keyed off
+   * `assets`, so it covers every path that lands here (generate, enhance, retry).
+   */
+  useEffect(() => {
+    if (!stripMetadata) return;
+    const pending = assets.filter(
+      (a) => !a.metaStripped && !autoStripRef.current.has(a.timestamp),
+    );
+    if (pending.length === 0) return;
+    pending.forEach((a) => autoStripRef.current.add(a.timestamp));
+    (async () => {
+      for (const a of pending) {
+        try {
+          const res = await authedFetch('/api/content/remove-watermark', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              image: { base64: a.base64, mimeType: a.mimeType },
+              removeSparkle: false,
+              stripMetadata: true,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          const cleaned = res.ok ? data.images?.[0] : null;
+          if (cleaned) {
+            setAssets((prev) =>
+              prev.map((x) =>
+                x.timestamp === a.timestamp
+                  ? {
+                      ...x,
+                      base64: cleaned.base64,
+                      mimeType: cleaned.mimeType || 'image/png',
+                      metaStripped: true,
+                    }
+                  : x,
+              ),
+            );
+          }
+          // On failure leave the asset unmarked and stay silent — this is a
+          // background nicety, not something to interrupt a generation over.
+        } catch {
+          /* ignore — background best-effort */
+        }
+      }
+    })();
+  }, [assets, stripMetadata]);
 
   const saveToLibrary = async (idx: number) => {
     if (!selectedAccountId || saving !== null) return;
@@ -1090,12 +1160,16 @@ export default function AssetCreator() {
                     <div className="aspect-square" style={{ backgroundColor: '#f5f5f5' }}>
                       <img src={`data:${asset.mimeType};base64,${asset.base64}`} alt="" className="w-full h-full object-contain" />
                     </div>
-                    {asset.cleaned && (
+                    {(asset.cleaned || asset.metaStripped) && (
                       <span
                         className="absolute top-1 left-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-black/60 text-emerald-300 text-[8px] font-medium"
-                        title="Watermark sparkle + 'Made with AI' metadata removed"
+                        title={
+                          asset.cleaned
+                            ? "Watermark sparkle + 'Made with AI' metadata removed"
+                            : "AI 'Made with AI' metadata (C2PA/EXIF/XMP) stripped"
+                        }
                       >
-                        <Check size={8} /> Cleaned
+                        <Check size={8} /> {asset.cleaned ? 'Cleaned' : 'Meta stripped'}
                       </span>
                     )}
                     <div
@@ -1827,6 +1901,24 @@ export default function AssetCreator() {
                 ))}
               </div>
             </div>
+            {/* Strip AI metadata — auto-removes the C2PA/EXIF "Made with AI" tag from every generation */}
+            <button
+              onClick={() => setStripMetadata(!stripMetadata)}
+              className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border transition-all ${
+                stripMetadata ? 'bg-purple-500/15 border-purple-500/40' : 'border-[#27273A] bg-[#0A0A0F]'
+              }`}
+              title="Automatically strip the C2PA / EXIF / XMP 'Made with AI' metadata from every generated asset, so platforms don't auto-label it. Lossless — pixels are untouched."
+            >
+              <span className="flex flex-col text-left">
+                <span className={`text-[11px] font-medium ${stripMetadata ? 'text-purple-200' : 'text-zinc-400'}`}>
+                  Strip AI metadata
+                </span>
+                <span className="text-[9px] text-zinc-500">Removes “Made with AI” tag · lossless</span>
+              </span>
+              <span className={`w-7 h-4 rounded-full relative shrink-0 transition-colors ${stripMetadata ? 'bg-purple-500/60' : 'bg-zinc-700'}`}>
+                <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${stripMetadata ? 'left-3.5' : 'left-0.5'}`} />
+              </span>
+            </button>
             <button
               onClick={generate}
               disabled={generating || (['isolate', 'variation', 'subtle-variations'].includes(mode) ? !refImage : (!dishName.trim() && !refImage))}
