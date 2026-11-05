@@ -20,7 +20,7 @@ import {
 import { addToFlowBucket, useFlowBucketDrop, flowItemToBase64, type FlowBucketItem } from './FlowBucket';
 import PushToSchedulerButton from './PushToSchedulerButton';
 import ModelPicker from './ModelPicker';
-import { modelName, getModel, PROVIDER_MAP } from '../lib/modelCatalog';
+import { modelName, getModel, PROVIDER_MAP, supportsQuality, qualityOptions, supportsReasoningEffort, REASONING_EFFORT_OPTIONS } from '../lib/modelCatalog';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../lib/firebase';
 import { useFirestoreAccounts, useFirestoreMediaAssets, useFirestoreAccount, type FirestoreMenuItem } from '../hooks/useFirestore';
@@ -436,6 +436,9 @@ export default function AssetCreator() {
     [setModel, setRecentModels],
   );
   const [resolution, setResolution] = usePersistedState<string>('asset.resolution', '1K');
+  // OpenAI GPT Image knobs — only sent for the models that declare them.
+  const [quality, setQuality] = usePersistedState<string>('asset.quality', 'high');
+  const [reasoningEffort, setReasoningEffort] = usePersistedState<string>('asset.reasoningEffort', 'high');
   const [detailPreset, setDetailPreset] = usePersistedState<string>('asset.detailPreset', '');
   const [detailChips, setDetailChips] = usePersistedState<string[]>('asset.detailChips', []);
   const [thinkingLevel, setThinkingLevel] = usePersistedState<string>('asset.thinkingLevel', '');
@@ -601,6 +604,8 @@ export default function AssetCreator() {
       dishName: dishName.trim(),
       model,
       resolution,
+      ...(supportsQuality(model) ? { quality } : {}),
+      ...(supportsReasoningEffort(model) ? { reasoningEffort } : {}),
       thinkingLevel: model === 'gemini-3.1-flash-image-preview' ? thinkingLevel : '',
       mode,
       variationNotes: variationNotes.trim() || undefined,
@@ -1387,6 +1392,51 @@ export default function AssetCreator() {
               ))}
             </div>
           </div>
+
+          {/* Quality — OpenAI GPT Image only (direct gpt-image-2 + Fal 2.5/2.6) */}
+          {supportsQuality(model) && (
+            <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
+              <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Quality</h3>
+              <div className="grid grid-cols-3 gap-1.5">
+                {qualityOptions(model).map((q) => (
+                  <button
+                    key={q.id}
+                    onClick={() => setQuality(q.id)}
+                    className={`px-2 py-2 rounded-lg border text-center transition-all ${
+                      quality === q.id ? 'bg-purple-500/10 border-purple-500/30' : 'border-[#27273A] bg-[#0A0A0F] hover:border-zinc-600'
+                    }`}
+                  >
+                    <p className={`text-[11px] font-semibold ${quality === q.id ? 'text-purple-300' : 'text-zinc-300'}`}>{q.label}</p>
+                    <p className="text-[8px] text-zinc-500 mt-0.5 leading-tight">{q.sub}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Reasoning effort — GPT Image 2.6 only */}
+          {supportsReasoningEffort(model) && (
+            <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
+              <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Reasoning effort</h3>
+              <div className="grid grid-cols-3 gap-1.5">
+                {REASONING_EFFORT_OPTIONS.map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => setReasoningEffort(r.id)}
+                    className={`px-2 py-2 rounded-lg border text-center transition-all ${
+                      reasoningEffort === r.id ? 'bg-purple-500/10 border-purple-500/30' : 'border-[#27273A] bg-[#0A0A0F] hover:border-zinc-600'
+                    }`}
+                  >
+                    <p className={`text-[11px] font-semibold ${reasoningEffort === r.id ? 'text-purple-300' : 'text-zinc-300'}`}>{r.label}</p>
+                    <p className="text-[8px] text-zinc-500 mt-0.5 leading-tight">{r.sub}</p>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-zinc-500 mt-2">
+                How much the model plans before it renders — separate from Quality. Higher helps dense text and busy layouts, but is slower.
+              </p>
+            </div>
+          )}
 
           {/* Detail Boost — always visible; applies to both generation and enhancement prompts */}
           <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
