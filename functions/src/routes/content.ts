@@ -313,6 +313,7 @@ router.post("/generate-composite", async (req, res) => {
       thinkingLevel = "",
       resolution = "2K",
       quality: rawQuality,
+      reasoningEffort: rawReasoningEffort,
       references = [],
     } = req.body as {
       prompt?: string;
@@ -321,6 +322,7 @@ router.post("/generate-composite", async (req, res) => {
       thinkingLevel?: string;
       resolution?: string;
       quality?: string;
+      reasoningEffort?: string;
       references?: { base64: string; mimeType: string; label: string }[];
     };
 
@@ -411,6 +413,7 @@ Produce a single photorealistic output image that follows this instruction preci
         aspectRatio,
         resolution: selectedRes,
         quality: rawQuality,
+        reasoningEffort: rawReasoningEffort,
         references: references.map((r) => ({ base64: r.base64, mimeType: r.mimeType })),
       });
       images.push(...falImages);
@@ -494,6 +497,7 @@ router.post("/generate-asset", async (req, res) => {
       referenceImage,
       variationIndex = 0,
       quality: rawQuality,
+      reasoningEffort: rawReasoningEffort,
       detailPreset = "",
       detailChips = [],
       removePeople = false,
@@ -517,6 +521,7 @@ router.post("/generate-asset", async (req, res) => {
       referenceImage?: { base64: string; mimeType: string };
       variationIndex?: number;
       quality?: string;
+      reasoningEffort?: string;
       detailPreset?: string;
       detailChips?: string[];
       removePeople?: boolean;
@@ -1071,6 +1076,7 @@ ${dishName.trim() ? `The subject is: ${dishName.trim()}.` : ""}`;
         aspectRatio,
         resolution: selectedRes,
         quality: rawQuality,
+        reasoningEffort: rawReasoningEffort,
         references: referenceImage
           ? [{ base64: referenceImage.base64, mimeType: referenceImage.mimeType }]
           : [],

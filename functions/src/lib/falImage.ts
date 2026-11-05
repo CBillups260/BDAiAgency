@@ -23,13 +23,35 @@ import { fal } from "@fal-ai/client";
 
 type RefMode = "single" | "multi";
 
-// OpenAI GPT Image 2.5 (Flare / Sunburst) hosted on Fal under the `openai/`
-// owner namespace. Text-to-image and `/edit` siblings share one schema:
-// `quality` (auto|low|medium|high|xhigh|max), `image_size` {width,height}
-// with both edges multiples of 16, max edge 3840, aspect ≤ 3:1, and a total
-// pixel budget of 655,360–8,294,400.
+// OpenAI GPT Image 2.5 / 2.6 (Flare / Sunburst) hosted on Fal under the
+// `openai/` owner namespace. Text-to-image and `/edit` siblings share one
+// schema: `quality` (auto|low|medium|high|xhigh|max), `image_size`
+// {width,height} with both edges multiples of 16, max edge 3840, aspect ≤ 3:1,
+// and a total pixel budget of 655,360–8,294,400.
 function isOpenAIGptImage(id: string): boolean {
   return id.startsWith("openai/gpt-image-");
+}
+
+/**
+ * GPT Image 2.6 only. It is schema-compatible with 2.5 but adds
+ * `reasoning_effort` — how much the model plans before rendering, independent
+ * of `quality`. Per Fal's schema, higher values help dense text and complex
+ * layouts at the cost of latency, which is exactly our typography work.
+ *
+ * 2.5 does NOT declare the field, so it stays gated here rather than going
+ * into the shared `familyExtras` body. (2.6 also adds gif/svg output and the
+ * frame_count / svg_model knobs; we only ever ask for png.)
+ */
+function isGptImage26(id: string): boolean {
+  return id.startsWith("openai/gpt-image-2.6/");
+}
+
+const REASONING_EFFORTS = ["low", "medium", "high"] as const;
+type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+function normalizeReasoningEffort(e: unknown): ReasoningEffort {
+  return (REASONING_EFFORTS as readonly string[]).includes(e as string)
+    ? (e as ReasoningEffort)
+    : "high"; // Fal's own default.
 }
 
 const OPENAI_QUALITIES = ["auto", "low", "medium", "high", "xhigh", "max"] as const;
@@ -137,9 +159,19 @@ function noRefEndpoint(id: string): string {
 }
 
 // Per-family static input extras.
-function familyExtras(id: string, quality?: unknown): Record<string, unknown> {
+function familyExtras(
+  id: string,
+  quality?: unknown,
+  reasoningEffort?: unknown,
+): Record<string, unknown> {
   if (isOpenAIGptImage(id)) {
-    return { quality: normalizeOpenAIQuality(quality), output_format: "png" };
+    return {
+      quality: normalizeOpenAIQuality(quality),
+      output_format: "png",
+      ...(isGptImage26(id)
+        ? { reasoning_effort: normalizeReasoningEffort(reasoningEffort) }
+        : {}),
+    };
   }
   if (id.includes("ideogram")) return { rendering_speed: "BALANCED" };
   if (id.includes("qwen-image")) return { acceleration: "regular" };
@@ -298,6 +330,8 @@ export interface FalImageOptions {
   references?: { base64: string; mimeType: string }[];
   /** OpenAI GPT Image quality tier (auto|low|medium|high|xhigh|max). Ignored by other families. */
   quality?: string;
+  /** GPT Image 2.6 planning effort (low|medium|high). Ignored by every other model. */
+  reasoningEffort?: string;
 }
 
 /**
@@ -317,7 +351,7 @@ export async function generateFalImage(
     prompt: opts.prompt,
     num_images: 1,
     sync_mode: true,
-    ...familyExtras(opts.model, opts.quality),
+    ...familyExtras(opts.model, opts.quality, opts.reasoningEffort),
   };
 
   let endpoint: string;
@@ -327,7 +361,7 @@ export async function generateFalImage(
       throw new Error(
         `${opts.model} is a text-to-image model and can't use reference images. ` +
           `Remove the reference image(s) or pick a reference-capable model ` +
-          `(GPT Image 2.5, Seedream, FLUX Kontext, Nano Banana, or a Gemini model).`,
+          `(GPT Image 2.6, Seedream, FLUX Kontext, Nano Banana, or a Gemini model).`,
       );
     }
     endpoint = edit.endpoint;

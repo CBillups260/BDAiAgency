@@ -4,7 +4,7 @@ import { Upload, Loader, Plus, Download, Trash2, X, AtSign, Zap, Star, Check } f
 import PushToSchedulerButton from './PushToSchedulerButton';
 import InspirationWidget from './InspirationWidget';
 import ModelPicker from './ModelPicker';
-import { modelName, getModel, PROVIDER_MAP, supportsQuality, qualityOptions, isOpenAIModel } from '../lib/modelCatalog';
+import { modelName, getModel, PROVIDER_MAP, supportsQuality, qualityOptions, isOpenAIModel, supportsReasoningEffort, REASONING_EFFORT_OPTIONS } from '../lib/modelCatalog';
 import { STYLE_RULES, buildStyleRulesSuffix } from '../lib/styleRules';
 import { motion } from 'motion/react';
 import { useFirestoreAccounts, useFirestoreAccount } from '../hooks/useFirestore';
@@ -106,6 +106,8 @@ interface ComposerTab {
   thinkingLevel: string;
   resolution: string;
   quality: string;
+  /** GPT Image 2.6 planning effort — how much it plans before rendering. */
+  reasoningEffort: string;
   count: number;
   applyBrandContext: boolean;
   composeDepth: 'quick' | 'deep';
@@ -158,6 +160,7 @@ const createDefaultTab = (overrides: Partial<ComposerTab> = {}): ComposerTab => 
   thinkingLevel: '',
   resolution: '2K',
   quality: 'high',
+  reasoningEffort: 'high',
   count: 1,
   applyBrandContext: false,
   composeDepth: 'quick',
@@ -189,6 +192,7 @@ const inheritSettings = (from: ComposerTab): Partial<ComposerTab> => ({
   thinkingLevel: from.thinkingLevel,
   resolution: from.resolution,
   quality: from.quality,
+  reasoningEffort: from.reasoningEffort,
   count: from.count,
   applyBrandContext: from.applyBrandContext,
   composeDepth: from.composeDepth,
@@ -839,6 +843,7 @@ export default function Composer() {
         thinkingLevel: tab.model === 'gemini-3.1-flash-image-preview' ? tab.thinkingLevel : '',
         resolution: tab.resolution,
         ...(supportsQuality(tab.model) ? { quality: tab.quality } : {}),
+      ...(supportsReasoningEffort(tab.model) ? { reasoningEffort: tab.reasoningEffort } : {}),
         references: relabeledForRequest,
       };
 
@@ -1011,6 +1016,7 @@ ${tab.quickAdjust.trim()}`;
       thinkingLevel: tab.model === 'gemini-3.1-flash-image-preview' ? tab.thinkingLevel : '',
       resolution: tab.resolution,
       ...(supportsQuality(tab.model) ? { quality: tab.quality } : {}),
+      ...(supportsReasoningEffort(tab.model) ? { reasoningEffort: tab.reasoningEffort } : {}),
       references: relabeledForRequest,
     };
 
@@ -1262,6 +1268,7 @@ ${tab.quickAdjust.trim()}`;
       thinkingLevel: tab.model === 'gemini-3.1-flash-image-preview' ? tab.thinkingLevel : '',
       resolution: tab.resolution,
       ...(supportsQuality(tab.model) ? { quality: tab.quality } : {}),
+      ...(supportsReasoningEffort(tab.model) ? { reasoningEffort: tab.reasoningEffort } : {}),
       references: tab.references.map((r) => ({
         base64: r.base64,
         mimeType: r.mimeType,
@@ -2404,6 +2411,28 @@ ${tab.quickAdjust.trim()}`;
                         </button>
                       ))}
                     </div>
+                  </div>
+                )}
+                {supportsReasoningEffort(tab.model) && (
+                  <div>
+                    <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Reasoning effort</h3>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {REASONING_EFFORT_OPTIONS.map((r) => (
+                        <button
+                          key={r.id}
+                          onClick={() => setActiveField('reasoningEffort', r.id)}
+                          className={`px-2 py-2 rounded-lg border text-center transition-all ${
+                            tab.reasoningEffort === r.id ? 'bg-purple-500/10 border-purple-500/30' : 'border-[#27273A] bg-[#0A0A0F] hover:border-zinc-600'
+                          }`}
+                        >
+                          <p className={`text-[11px] font-semibold ${tab.reasoningEffort === r.id ? 'text-purple-300' : 'text-zinc-300'}`}>{r.label}</p>
+                          <p className="text-[8px] text-zinc-500 mt-0.5 leading-tight">{r.sub}</p>
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-zinc-500 mt-2">
+                      How much the model plans before it renders — separate from Quality. Higher helps dense text and busy layouts, but is slower.
+                    </p>
                   </div>
                 )}
                 {isOpenAIModel(tab.model) && (

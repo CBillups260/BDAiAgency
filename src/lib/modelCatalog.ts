@@ -118,8 +118,10 @@ export const MODELS: CatalogModel[] = [
   // GPT Image 2.5 (Sept 2026) ships as two Fal-hosted variants. Flare = default
   // (higher quality than GPT Image 2 at ~50% lower latency); Sunburst = premium,
   // tighter control across multi-turn edits. Both take up to 16 refs via `/edit`.
-  { id: 'openai/gpt-image-2.5/flare/text-to-image', name: 'GPT Image 2.5 Flare', provider: 'openai', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'editing', 'typography'], features: ['refs', 'hires'], isNew: true, featured: true, tier: 3 },
-  { id: 'openai/gpt-image-2.5/sunburst/text-to-image', name: 'GPT Image 2.5 Sunburst', provider: 'openai', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'editing', 'typography'], features: ['refs', 'hires'], isNew: true, featured: true, tier: 4 },
+  { id: 'openai/gpt-image-2.6/flare/text-to-image', name: 'GPT Image 2.6 Flare', provider: 'openai', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'editing', 'typography'], features: ['refs', 'hires'], isNew: true, featured: true, tier: 3 },
+  { id: 'openai/gpt-image-2.6/sunburst/text-to-image', name: 'GPT Image 2.6 Sunburst', provider: 'openai', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'editing', 'typography'], features: ['refs', 'hires'], isNew: true, featured: true, tier: 4 },
+  { id: 'openai/gpt-image-2.5/flare/text-to-image', name: 'GPT Image 2.5 Flare', provider: 'openai', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'editing', 'typography'], features: ['refs', 'hires'], featured: true, tier: 3 },
+  { id: 'openai/gpt-image-2.5/sunburst/text-to-image', name: 'GPT Image 2.5 Sunburst', provider: 'openai', refs: 'multi', maxRes: '4K', bestFor: ['photoreal', 'editing', 'typography'], features: ['refs', 'hires'], featured: true, tier: 4 },
   { id: 'gpt-image-2', name: 'GPT Image 2', provider: 'openai', refs: 'single', maxRes: '4K', bestFor: ['photoreal', 'editing'], features: ['refs', 'hires'], featured: true, direct: true, tier: 3 },
   { id: 'fal-ai/gpt-image-1/text-to-image', name: 'GPT Image 1', provider: 'openai', refs: 'none', maxRes: '2K', bestFor: ['photoreal'], tier: 3 },
   { id: 'fal-ai/gpt-image-1-mini', name: 'GPT Image 1 Mini', provider: 'openai', refs: 'none', maxRes: '2K', bestFor: ['fast', 'budget'], tier: 2 },
@@ -227,14 +229,34 @@ export const OPENAI_QUALITY_OPTIONS: QualityOption[] = [
   { id: 'low', label: 'Low', sub: 'Fast, cheap' },
   { id: 'medium', label: 'Medium', sub: 'Balanced' },
   { id: 'high', label: 'High', sub: 'Best detail' },
-  { id: 'xhigh', label: 'X-High', sub: '2.5 only · more detail' },
-  { id: 'max', label: 'Max', sub: '2.5 only · slowest, priciest' },
+  { id: 'xhigh', label: 'X-High', sub: '2.5+ only · more detail' },
+  { id: 'max', label: 'Max', sub: '2.5+ only · slowest, priciest' },
 ];
 
-/** Fal-hosted GPT Image 2.5 (Flare / Sunburst). */
-export function isGptImage25(id: string): boolean {
-  return id.startsWith('openai/gpt-image-2.5/');
+/**
+ * Fal-hosted GPT Image 2.5 / 2.6 (Flare / Sunburst). The two versions share an
+ * input schema apart from 2.6's extra `reasoning_effort`, so everything gated
+ * on "is this the Fal GPT Image family" matches both.
+ */
+export function isFalGptImage(id: string): boolean {
+  return id.startsWith('openai/gpt-image-2.5/') || id.startsWith('openai/gpt-image-2.6/');
 }
+
+/**
+ * GPT Image 2.6 only: how much the model plans before it renders, separate
+ * from `quality`. Fal's schema notes that higher effort helps dense text and
+ * complex layouts at the cost of latency — i.e. exactly the graphics work this
+ * app does — so it is worth exposing rather than leaving at the default.
+ */
+export function supportsReasoningEffort(id: string): boolean {
+  return id.startsWith('openai/gpt-image-2.6/');
+}
+
+export const REASONING_EFFORT_OPTIONS: QualityOption[] = [
+  { id: 'low', label: 'Low', sub: 'Fastest' },
+  { id: 'medium', label: 'Medium', sub: 'Balanced' },
+  { id: 'high', label: 'High', sub: 'Best for dense text' },
+];
 
 /**
  * Any OpenAI image model, direct or Fal-hosted. Broader than `supportsQuality`
@@ -245,14 +267,14 @@ export function isOpenAIModel(id: string): boolean {
   return getModel(id)?.provider === 'openai';
 }
 
-/** Models that accept the OpenAI `quality` parameter (direct gpt-image-2 + Fal GPT Image 2.5). */
+/** Models that accept the OpenAI `quality` parameter (direct gpt-image-2 + Fal GPT Image 2.5/2.6). */
 export function supportsQuality(id: string): boolean {
-  return id === 'gpt-image-2' || isGptImage25(id);
+  return id === 'gpt-image-2' || isFalGptImage(id);
 }
 
 /** The quality tiers valid for a given model. */
 export function qualityOptions(id: string): QualityOption[] {
-  if (isGptImage25(id)) return OPENAI_QUALITY_OPTIONS;
+  if (isFalGptImage(id)) return OPENAI_QUALITY_OPTIONS;
   if (id === 'gpt-image-2') return OPENAI_QUALITY_OPTIONS.filter((q) => q.id !== 'xhigh' && q.id !== 'max');
   return [];
 }
