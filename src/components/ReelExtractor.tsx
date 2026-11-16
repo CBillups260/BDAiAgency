@@ -20,7 +20,7 @@ import { motion } from 'motion/react';
 import ReelBrander from './ReelBrander';
 import VideoTimelineEditor from './VideoTimelineEditor';
 
-type Platform = 'facebook' | 'instagram' | 'tiktok' | 'youtube';
+type Platform = 'facebook' | 'instagram' | 'tiktok' | 'youtube' | 'pinterest';
 
 interface ExtractDownload {
   quality: string;
@@ -42,6 +42,8 @@ interface ExtractResult {
   durationSeconds?: number | null;
   /** Present when metadata came back but the file itself can't be fetched. */
   note?: string;
+  /** Pinterest: the original creator when the pin is someone else's repost. */
+  repinnedFrom?: string | null;
 }
 
 const DEFAULT_ASPECT = 9 / 16;
@@ -74,6 +76,7 @@ const PLATFORMS: Record<Platform, { label: string; color: string }> = {
   instagram: { label: 'Instagram', color: '#E4405F' },
   tiktok: { label: 'TikTok', color: '#25F4EE' },
   youtube: { label: 'YouTube', color: '#FF0000' },
+  pinterest: { label: 'Pinterest', color: '#E60023' },
 };
 
 /** Client-side platform hint — instant feedback before we hit the server. */
@@ -95,6 +98,11 @@ function detectPlatform(raw: string): Platform | null {
     host.endsWith('.youtube-nocookie.com')
   ) {
     return 'youtube';
+  }
+  // Matches every pinterest country domain (pinterest.co.uk, in.pinterest.com …)
+  // plus the pin.it share shortener.
+  if (/(^|\.)pinterest\.[a-z]{2,3}(\.[a-z]{2})?$/.test(host) || host === 'pin.it') {
+    return 'pinterest';
   }
   return null;
 }
@@ -131,7 +139,7 @@ export default function ReelExtractor() {
     const u = url.trim();
     if (!u || loading) return;
     if (!detectPlatform(u)) {
-      setError('Paste a Facebook, Instagram, TikTok, or YouTube video link.');
+      setError('Paste a Facebook, Instagram, TikTok, YouTube, or Pinterest video link.');
       return;
     }
     setLoading(true);
@@ -213,8 +221,8 @@ export default function ReelExtractor() {
           <h3 className="text-sm font-medium text-zinc-300 uppercase tracking-wider">Reel Extractor</h3>
         </div>
         <p className="text-zinc-500 text-xs mb-4">
-          Paste any Facebook, Instagram, TikTok, or YouTube link — we'll detect the platform, pull the
-          downloadable video, and let you trim it before export.
+          Paste any Facebook, Instagram, TikTok, YouTube, or Pinterest link — we'll detect the
+          platform, pull the downloadable video, and let you trim it before export.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-2">
@@ -228,7 +236,7 @@ export default function ReelExtractor() {
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && extract()}
-              placeholder="https://www.facebook.com/reel/…  ·  instagram.com/reel/…  ·  tiktok.com/@user/video/…"
+              placeholder="https://www.facebook.com/reel/…  ·  instagram.com/reel/…  ·  tiktok.com/@user/video/…  ·  pinterest.com/pin/…"
               className="w-full bg-[#0A0A0F] border border-[#27273A] rounded-xl pl-10 pr-24 py-3 text-sm text-white placeholder-zinc-600 outline-none focus:border-purple-500/40 transition-colors"
             />
             {detected && (
@@ -330,9 +338,20 @@ export default function ReelExtractor() {
                 {result.author && (
                   <span className="text-sm font-medium text-white truncate">@{result.author}</span>
                 )}
-                <span className="flex items-center gap-1 text-xs text-zinc-400">
-                  <Eye size={13} /> {formatCount(result.views)}
-                </span>
+                {result.repinnedFrom && (
+                  <span
+                    className="flex items-center gap-1 text-xs text-amber-300/90"
+                    title="This pin is a repost — the account that pinned it isn't who made it."
+                  >
+                    <AlertCircle size={12} /> originally @{result.repinnedFrom}
+                  </span>
+                )}
+                {/* Pinterest publishes no view count, so don't show a fake zero. */}
+                {result.views > 0 && (
+                  <span className="flex items-center gap-1 text-xs text-zinc-400">
+                    <Eye size={13} /> {formatCount(result.views)}
+                  </span>
+                )}
                 <span className="flex items-center gap-1 text-xs text-zinc-400">
                   <Heart size={13} /> {formatCount(result.likes)}
                 </span>

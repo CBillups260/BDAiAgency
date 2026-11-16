@@ -183,13 +183,14 @@ router.get("/twitter/:username", async (req, res) => {
 
 // ─── Universal Reel / Video Extractor ────────────────────
 //
-// Paste any Facebook, Instagram, or TikTok video/reel URL. We detect the
+// Paste any Facebook, Instagram, TikTok, YouTube or Pinterest video/reel URL.
+// We detect the
 // platform from the hostname (no LLM needed) and hit the matching
 // ScrapeCreators "single post/reel by URL" endpoint, then normalize the
 // response down to the bits the UI cares about: a caption, a thumbnail, some
 // stats, and one or more downloadable MP4 URLs.
 
-type ExtractPlatform = "facebook" | "instagram" | "tiktok" | "youtube";
+type ExtractPlatform = "facebook" | "instagram" | "tiktok" | "youtube" | "pinterest";
 
 interface ExtractDownload {
   quality: string; // "HD", "SD", "No watermark", "Original", ...
@@ -212,6 +213,13 @@ interface ExtractResult {
   durationSeconds?: number | null;
   /** Set when we could read the metadata but not offer the file (see ytdlp.ts). */
   note?: string;
+  /**
+   * Pinterest only: the original creator when this pin is a repin of someone
+   * else's work. Most Pinterest video is reshared, so the account that pinned
+   * it usually isn't who made it — the UI shows this so nobody reuses footage
+   * thinking it came from the pinner.
+   */
+  repinnedFrom?: string | null;
 }
 
 /**
@@ -254,7 +262,39 @@ function detectPlatform(rawUrl: string): ExtractPlatform | null {
   ) {
     return "youtube";
   }
+  // Pinterest runs dozens of country domains (pinterest.co.uk, pinterest.com.mx,
+  // in.pinterest.com …) plus the pin.it share shortener, so match the shape
+  // rather than listing them.
+  if (/(^|\.)pinterest\.[a-z]{2,3}(\.[a-z]{2})?$/.test(host) || host === "pin.it") {
+    return "pinterest";
+  }
   return null;
+}
+
+/**
+ * pin.it links are what Pinterest's own "Copy link" button hands you on mobile,
+ * and ScrapeCreators wants the canonical /pin/<id>/ URL. Follow the redirect
+ * ourselves rather than making the user go find the long link.
+ */
+async function resolvePinShortLink(raw: string): Promise<string> {
+  let host = "";
+  try {
+    host = new URL(raw).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return raw;
+  }
+  if (host !== "pin.it") return raw;
+  try {
+    const r = await fetch(raw, { redirect: "follow" });
+    // Pinterest sometimes lands on an interstitial that carries the real pin in
+    // a canonical link rather than in the final URL.
+    if (/\/pin\//.test(r.url)) return r.url;
+    const html = await r.text().catch(() => "");
+    const m = /https?:\/\/[a-z.]*pinterest\.[a-z.]+\/pin\/\d+/i.exec(html);
+    return m ? m[0] : r.url || raw;
+  } catch {
+    return raw;
+  }
 }
 
 // Query params that are pure tracking / share cruft. Stripping them turns a
@@ -309,6 +349,120 @@ async function scGet(path: string): Promise<any> {
   return body;
 }
 
+// ─── Pinterest video plumbing ────────────────────────────
+//
+// Pinterest has two unrelated video shapes — classic video pins hang off
+// `videos`, Idea Pins bury theirs in
+// `storyPinData.pages[].blocks[].videoDataV2.videoList.*` — and the same data
+// comes back camelCased from one endpoint and snake_cased from another. Rather
+// than hard-code either tree, walk the response and pick up anything that looks
+// playable. A multi-page Idea Pin yields one entry per page, which is how the
+// UI can offer "Clip 1 / Clip 2".
+
+interface PinVideo {
+  url: string;
+  width: number | null;
+  height: number | null;
+  thumbnail: string | null;
+  durationMs: number | null;
+}
+
+/** HLS playlists need a remux before anything can play or edit them. */
+function isHlsUrl(url: string): boolean {
+  try {
+    return new URL(url).pathname.toLowerCase().endsWith(".m3u8");
+  } catch {
+    return /\.m3u8(\?|$)/i.test(url);
+  }
+}
+
+/**
+ * Pinterest names every rendition of a video after the same content hash
+ * (`…/95/3d/a8/953da8f8….m3u8`), so that hash groups an HLS playlist and an
+ * MP4 of the *same* clip together instead of letting them show up as two.
+ */
+function pinVideoGroupKey(url: string): string {
+  try {
+    const p = new URL(url).pathname;
+    const m = /([0-9a-f]{32})/i.exec(p);
+    return m ? m[1].toLowerCase() : p;
+  } catch {
+    return url;
+  }
+}
+
+function collectPinterestVideos(root: unknown): PinVideo[] {
+  const found: PinVideo[] = [];
+  const seen = new Set<string>();
+  const visit = (node: unknown, depth: number): void => {
+    if (!node || typeof node !== "object" || depth > 14) return;
+    if (Array.isArray(node)) {
+      for (const v of node) visit(v, depth + 1);
+      return;
+    }
+    const o = node as Record<string, unknown>;
+    const url = typeof o.url === "string" ? o.url : "";
+    if (url && /\.(mp4|m3u8)(\?|$)/i.test(url) && !seen.has(url)) {
+      seen.add(url);
+      const w = Number(o.width);
+      const h = Number(o.height);
+      const dur = Number(o.duration);
+      found.push({
+        url,
+        width: Number.isFinite(w) && w > 0 ? Math.round(w) : null,
+        height: Number.isFinite(h) && h > 0 ? Math.round(h) : null,
+        thumbnail: typeof o.thumbnail === "string" ? o.thumbnail : null,
+        durationMs: Number.isFinite(dur) && dur > 0 ? dur : null,
+      });
+    }
+    for (const v of Object.values(o)) visit(v, depth + 1);
+  };
+  visit(root, 0);
+
+  // One entry per actual clip, in page order, each represented by its best
+  // rendition: a real MP4 beats HLS (no remux needed), then the taller one.
+  const groups = new Map<string, PinVideo>();
+  for (const v of found) {
+    const key = pinVideoGroupKey(v.url);
+    const cur = groups.get(key);
+    if (!cur) {
+      groups.set(key, v);
+      continue;
+    }
+    const better =
+      (isHlsUrl(cur.url) && !isHlsUrl(v.url)) ||
+      (isHlsUrl(cur.url) === isHlsUrl(v.url) && (v.height ?? 0) > (cur.height ?? 0));
+    if (better) groups.set(key, { ...v, thumbnail: v.thumbnail || cur.thumbnail });
+  }
+  return [...groups.values()];
+}
+
+/**
+ * Pinterest's metadata reports the *source* resolution, not what it actually
+ * serves — a pin claiming 1080×1920 can top out at a 720×1280 HLS variant. Read
+ * the master playlist and take the largest RESOLUTION really on offer, which is
+ * also the one ffmpeg picks, so the quality label and the editor's aspect ratio
+ * describe the file we hand back rather than an ideal one.
+ */
+async function probeHlsBestResolution(
+  masterUrl: string,
+): Promise<{ width: number; height: number } | null> {
+  try {
+    const r = await fetch(masterUrl, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const text = await r.text();
+    let best: { width: number; height: number } | null = null;
+    for (const m of text.matchAll(/RESOLUTION=(\d+)x(\d+)/gi)) {
+      const width = Number(m[1]);
+      const height = Number(m[2]);
+      if (!best || width * height > best.width * best.height) best = { width, height };
+    }
+    return best;
+  } catch {
+    return null;
+  }
+}
+
 router.get("/extract", async (req, res) => {
   try {
     if (!scKey()) {
@@ -320,7 +474,8 @@ router.get("/extract", async (req, res) => {
     const platform = detectPlatform(url);
     if (!platform) {
       return res.status(400).json({
-        error: "Unrecognized link. Paste a Facebook, Instagram, TikTok, or YouTube video URL.",
+        error:
+          "Unrecognized link. Paste a Facebook, Instagram, TikTok, YouTube, or Pinterest video URL.",
       });
     }
 
@@ -386,7 +541,66 @@ router.get("/extract", async (req, res) => {
       return res.json(result);
     }
 
-    if (platform === "facebook") {
+    if (platform === "pinterest") {
+      // pin.it is what Pinterest's own share sheet produces; ScrapeCreators
+      // wants the canonical /pin/<id>/ link.
+      const target = await resolvePinShortLink(cleaned);
+      const data = await scGet(`/v1/pinterest/pin?url=${encodeURIComponent(target)}`);
+      const vids = collectPinterestVideos(data);
+
+      // Pinterest splits title and description, and leaves whichever one the
+      // creator skipped as an empty/whitespace string.
+      const caption =
+        [data.title, data.description, data.gridTitle, data.storyPinData?.metadata?.pinTitle]
+          .map((v: unknown) => (typeof v === "string" ? v.trim() : ""))
+          .find(Boolean) || "";
+
+      const pinner = data.pinner?.username || null;
+      const creator = data.originPinner?.username || data.nativeCreator?.username || null;
+
+      // Only the lead clip gets a playlist probe — one small fetch, and it is
+      // the rendition the download button hands over.
+      const best = vids[0] || null;
+      let width = best?.width ?? null;
+      let height = best?.height ?? null;
+      if (best && isHlsUrl(best.url)) {
+        const real = await probeHlsBestResolution(best.url);
+        if (real) {
+          width = real.width;
+          height = real.height;
+        }
+      }
+
+      const downloads: ExtractDownload[] = vids.map((v, i) => {
+        const w = i === 0 ? width ?? v.width : v.width;
+        const h = i === 0 ? height ?? v.height : v.height;
+        // Pinterest video is nearly all vertical, and "720p" means the short
+        // side — labelling a 720×1280 clip "1280p" would read as a lie.
+        const shortSide = w && h ? Math.min(w, h) : h;
+        const label = shortSide ? `${shortSide}p` : "Original";
+        return {
+          quality: vids.length > 1 ? `Clip ${i + 1} · ${label}` : label,
+          url: v.url,
+          recommended: i === 0,
+        };
+      });
+
+      result = {
+        platform,
+        sourceUrl: url,
+        caption,
+        thumbnail: best?.thumbnail || data.images_orig?.url || data.imageLargeUrl || null,
+        author: pinner || creator,
+        // Pinterest publishes no view count; saves/reactions are what it shows.
+        views: 0,
+        likes: Number(data.totalReactionCount) || Number(data.repinCount) || 0,
+        width,
+        height,
+        downloads,
+        durationSeconds: best?.durationMs ? Math.round(best.durationMs / 1000) : null,
+        repinnedFrom: creator && creator !== pinner ? creator : null,
+      };
+    } else if (platform === "facebook") {
       const data = await scGet(`/v1/facebook/post?url=${encodeURIComponent(cleaned)}`);
       const v = data.video || {};
       const downloads: ExtractDownload[] = [];
@@ -500,7 +714,28 @@ const DOWNLOAD_HOST_ALLOW = [
   "byteicdn.com",
   "ibyteimg.com",
   "akamaized.net",
+  "pinimg.com", // pinterest (i.pinimg.com images, v1.pinimg.com video/HLS)
 ];
+
+/**
+ * Pinterest serves Idea Pin video as HLS, so there is no single file to proxy
+ * or hand to ffmpeg's filter graph. Remux the stream into a real MP4 first with
+ * `-c copy` — no re-encode, so it is quick and lossless — and ffmpeg takes the
+ * highest-bandwidth variant in the master playlist. `aac_adtstoasc` converts
+ * the ADTS audio frames HLS carries into the form MP4 expects; `+faststart`
+ * puts the index up front so the result streams in a browser.
+ */
+async function remuxHlsToFile(url: string, destPath: string): Promise<void> {
+  await runFfmpeg([
+    "-y",
+    "-loglevel", "error",
+    "-i", url,
+    "-c", "copy",
+    "-bsf:a", "aac_adtstoasc",
+    "-movflags", "+faststart",
+    destPath,
+  ]);
+}
 
 
 /**
@@ -555,6 +790,22 @@ router.get("/download", async (req, res) => {
     }
     const allowed = DOWNLOAD_HOST_ALLOW.some((h) => host === h || host.endsWith("." + h));
     if (!allowed) return res.status(403).json({ error: "Host not allowed for download proxy." });
+
+    // Pinterest HLS: no single file upstream, so build the MP4 here. The host
+    // allowlist above gates what ffmpeg is allowed to open.
+    if (isHlsUrl(url)) {
+      const tmp = path.join(os.tmpdir(), `bdai-hls-${randomUUID()}.mp4`);
+      try {
+        await remuxHlsToFile(url, tmp);
+        const buf = await fs.readFile(tmp);
+        res.setHeader("Content-Type", "video/mp4");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader("Content-Length", String(buf.length));
+        return res.send(buf);
+      } finally {
+        await fs.unlink(tmp).catch(() => {});
+      }
+    }
 
     const upstream = await fetch(url);
     if (!upstream.ok) return res.status(upstream.status).end();
@@ -641,16 +892,21 @@ router.post("/brand-video", async (req, res) => {
   const safeName = (filename || "branded-reel.mp4").replace(/[^a-zA-Z0-9._-]/g, "_");
 
   try {
-    // 1. Download source video into /tmp.
-    const upstream = await fetch(videoUrl);
-    if (!upstream.ok) {
-      return res.status(502).json({ error: `Could not fetch the source video (HTTP ${upstream.status}).` });
+    // 1. Download source video into /tmp. Pinterest hands us an HLS playlist
+    //    rather than a file, so that gets remuxed into one on the way in.
+    if (isHlsUrl(videoUrl)) {
+      await remuxHlsToFile(videoUrl, inPath);
+    } else {
+      const upstream = await fetch(videoUrl);
+      if (!upstream.ok) {
+        return res.status(502).json({ error: `Could not fetch the source video (HTTP ${upstream.status}).` });
+      }
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      if (buf.length > MAX_VIDEO_BYTES) {
+        return res.status(413).json({ error: "That video is too large to brand (over 120MB)." });
+      }
+      await fs.writeFile(inPath, buf);
     }
-    const buf = Buffer.from(await upstream.arrayBuffer());
-    if (buf.length > MAX_VIDEO_BYTES) {
-      return res.status(413).json({ error: "That video is too large to brand (over 120MB)." });
-    }
-    await fs.writeFile(inPath, buf);
 
     // 2. Write the overlay PNG.
     const pngB64 = overlayBase64.replace(/^data:image\/\w+;base64,/, "");
@@ -800,17 +1056,22 @@ router.post("/trim", async (req, res) => {
       if (!DOWNLOAD_HOST_ALLOW.some((h) => host === h || host.endsWith("." + h))) {
         return res.status(403).json({ error: "Video host not allowed." });
       }
-      const upstream = await fetch(videoUrl);
-      if (!upstream.ok) {
-        return res
-          .status(502)
-          .json({ error: `Could not fetch the source video (HTTP ${upstream.status}).` });
+      if (isHlsUrl(videoUrl)) {
+        // Pinterest Idea Pin — remux the playlist into a real MP4 to cut from.
+        await remuxHlsToFile(videoUrl, inPath);
+      } else {
+        const upstream = await fetch(videoUrl);
+        if (!upstream.ok) {
+          return res
+            .status(502)
+            .json({ error: `Could not fetch the source video (HTTP ${upstream.status}).` });
+        }
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        if (buf.length > MAX_VIDEO_BYTES) {
+          return res.status(413).json({ error: "That video is too large to edit (over 120MB)." });
+        }
+        await fs.writeFile(inPath, buf);
       }
-      const buf = Buffer.from(await upstream.arrayBuffer());
-      if (buf.length > MAX_VIDEO_BYTES) {
-        return res.status(413).json({ error: "That video is too large to edit (over 120MB)." });
-      }
-      await fs.writeFile(inPath, buf);
     }
 
     // 2. One trim pair per kept segment, concatenated in order.
