@@ -52,7 +52,25 @@ function ratioLabel(aspect: number): string {
   return aspect >= 1 ? 'landscape' : 'portrait';
 }
 
-const TEXT_SHADOW = '0 1px 5px rgba(0,0,0,0.85), 0 0 2px rgba(0,0,0,0.6)';
+/**
+ * Drop shadows are part of the type's weight, so they shrink with it — a 5px
+ * blur under 4px text reads as a smudge.
+ */
+const textShadowAt = (s: number) =>
+  `0 ${1 * s}px ${5 * s}px rgba(0,0,0,0.85), 0 0 ${2 * s}px rgba(0,0,0,0.6)`;
+
+/**
+ * The brand strip's sizes are tuned against the 360×640 portrait canvas. A
+ * landscape canvas is the same width but barely a third as tall, so those same
+ * pixel values swallow the frame — a 60px logo is 9% of a 9:16 reel's height
+ * but 30% of a 16:9 one. Scaling every metric by the canvas height keeps the
+ * stack at a constant share of the frame whatever the aspect ratio. Floored so
+ * an ultra-wide (21:9) clip doesn't shrink it into nothing.
+ */
+const STRIP_MIN_SCALE = 0.34;
+function stripScale(cardH: number): number {
+  return Math.min(1, Math.max(STRIP_MIN_SCALE, cardH / PREVIEW_MAX_H));
+}
 
 /** Pull "Address: ..." / "Phone: ..." lines out of an account's description. */
 function parseField(desc: string | null | undefined, label: string): string {
@@ -69,6 +87,11 @@ function formatAddress(addr: string): string[] {
 
 export default function ReelBrander({ thumbnailUrl, downloadUrl, defaultName, aspect }: Props) {
   const { w: cardW, h: cardH } = fitBox(aspect || DEFAULT_ASPECT, PREVIEW_MAX_W, PREVIEW_MAX_H);
+  // One multiplier for every size in the strip — see stripScale(). 1 on
+  // portrait, so 9:16 renders byte-for-byte as it did before.
+  const sc = stripScale(cardH);
+  const px = (n: number) => Math.round(n * sc * 100) / 100;
+  const shadow = textShadowAt(sc);
   const { accounts } = useFirestoreAccounts();
   const [accountId, setAccountId] = usePersistedState<string | null>('reel.brand.accountId', null);
   const { account } = useFirestoreAccount(accountId);
@@ -114,15 +137,15 @@ export default function ReelBrander({ thumbnailUrl, downloadUrl, defaultName, as
     <div
       style={{
         position: 'absolute',
-        bottom: 24,
-        left: align === 'left' ? 18 : undefined,
-        right: align === 'right' ? 18 : undefined,
+        bottom: px(24),
+        left: align === 'left' ? px(18) : undefined,
+        right: align === 'right' ? px(18) : undefined,
         maxWidth: '82%',
         display: 'flex',
         flexDirection: 'column',
         alignItems: align === 'left' ? 'flex-start' : 'flex-end',
         textAlign: align,
-        gap: 4,
+        gap: px(4),
       }}
     >
       {showLogo && logoSrc && (
@@ -130,17 +153,17 @@ export default function ReelBrander({ thumbnailUrl, downloadUrl, defaultName, as
           src={logoSrc}
           alt=""
           style={{
-            height: LOGO_PX[logoSize],
+            height: px(LOGO_PX[logoSize]),
             maxWidth: '100%',
             objectFit: 'contain',
             display: 'block',
-            marginBottom: 4,
-            filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.55))',
+            marginBottom: px(4),
+            filter: `drop-shadow(0 ${2 * sc}px ${6 * sc}px rgba(0,0,0,0.55))`,
           }}
         />
       )}
       {phone && (
-        <div style={{ color: '#fff', fontSize: 14, fontWeight: 700, lineHeight: 1.15, textShadow: TEXT_SHADOW }}>
+        <div style={{ color: '#fff', fontSize: px(14), fontWeight: 700, lineHeight: 1.15, textShadow: shadow }}>
           {phone}
         </div>
       )}
@@ -148,12 +171,12 @@ export default function ReelBrander({ thumbnailUrl, downloadUrl, defaultName, as
         <div
           style={{
             color: '#fff',
-            fontSize: 10,
+            fontSize: px(10),
             fontWeight: 600,
             lineHeight: 1.3,
             textTransform: 'uppercase',
             letterSpacing: '0.02em',
-            textShadow: TEXT_SHADOW,
+            textShadow: shadow,
           }}
         >
           {formatAddress(address).map((ln, i) => (
@@ -162,7 +185,7 @@ export default function ReelBrander({ thumbnailUrl, downloadUrl, defaultName, as
         </div>
       )}
       {headline.trim() && (
-        <div style={{ color: '#fff', fontSize: 10.5, fontWeight: 500, lineHeight: 1.25, marginTop: 1, textShadow: TEXT_SHADOW }}>
+        <div style={{ color: '#fff', fontSize: px(10.5), fontWeight: 500, lineHeight: 1.25, marginTop: px(1), textShadow: shadow }}>
           {headline.trim()}
         </div>
       )}
