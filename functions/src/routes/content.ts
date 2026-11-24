@@ -9,6 +9,12 @@ import {
   SynthIDServiceError,
 } from "../lib/synthidService.js";
 import { generateFalImage, isFalModel } from "../lib/falImage.js";
+import {
+  submitEnhance,
+  enhanceStatus,
+  UPSCALE_MODELS,
+  INTERPOLATE_MODELS,
+} from "../lib/falVideo.js";
 
 // Our own directly-integrated (non-Fal) image models.
 const DIRECT_IMAGE_MODELS = [
@@ -219,6 +225,87 @@ router.post("/remove-watermark", async (req, res) => {
 // is actually configured.
 router.get("/remove-watermark/capabilities", (_req, res) => {
   res.json({ invisibleAvailable: isInvisibleRemovalConfigured() });
+});
+
+// ─── Video Enhancer (Topaz upscale + frame interpolation via Fal) ─
+
+/**
+ * Queue an enhancement job. Returns straight away with the ids the client
+ * polls — a Topaz pass on a minute of footage runs for minutes, far past both
+ * the Netlify proxy's 26s rewrite limit and the function's own ceiling.
+ *
+ * `videoUrl` must be publicly fetchable: Fal pulls the file from that URL
+ * itself. The UI uploads local files to the public-read Firebase Storage
+ * prefix first and sends the download URL here.
+ */
+router.post("/enhance-video", async (req, res) => {
+  try {
+    const {
+      videoUrl,
+      upscaleFactor = 1,
+      targetFps = null,
+      model,
+      h264 = true,
+    } = req.body as {
+      videoUrl?: string;
+      upscaleFactor?: number;
+      targetFps?: number | null;
+      model?: string;
+      h264?: boolean;
+    };
+
+    if (!videoUrl || typeof videoUrl !== "string") {
+      return res.status(400).json({ error: "videoUrl is required." });
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(videoUrl);
+    } catch {
+      return res.status(400).json({ error: "videoUrl is not a valid URL." });
+    }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return res.status(400).json({ error: "videoUrl must be an http(s) URL Fal can fetch." });
+    }
+
+    const factor = Number(upscaleFactor) || 1;
+    // The model list depends on which endpoint the job will land on, so
+    // validate against the same rule planEnhance() uses to choose it.
+    const allowed: readonly string[] = factor > 1 ? UPSCALE_MODELS : INTERPOLATE_MODELS;
+    const chosen = typeof model === "string" && allowed.includes(model) ? model : allowed[0];
+
+    const { requestId, endpoint } = await submitEnhance({
+      videoUrl,
+      upscaleFactor: factor,
+      targetFps: targetFps == null ? null : Number(targetFps),
+      model: chosen,
+      h264: h264 !== false,
+    });
+
+    res.json({ requestId, endpoint, model: chosen });
+  } catch (err: any) {
+    console.error("enhance-video error:", err?.message || err);
+    res.status(500).json({ error: err?.message || "Failed to queue the video enhancement." });
+  }
+});
+
+/** Poll a queued job. The client passes back both ids from /enhance-video. */
+router.get("/enhance-video/status", async (req, res) => {
+  try {
+    const requestId = ((req.query.requestId as string) || "").trim();
+    const endpoint = ((req.query.endpoint as string) || "").trim();
+    if (!requestId || !endpoint) {
+      return res.status(400).json({ error: "requestId and endpoint are required." });
+    }
+    // Only our own two endpoints are pollable — this handler holds the Fal key,
+    // so don't let a caller aim it at an arbitrary endpoint id.
+    if (!/^(fal-ai\/topaz\/upscale\/video|topaz\/interpolate\/video)$/.test(endpoint)) {
+      return res.status(400).json({ error: "Unknown endpoint." });
+    }
+    res.json(await enhanceStatus(endpoint, requestId));
+  } catch (err: any) {
+    console.error("enhance-video status error:", err?.message || err);
+    res.status(500).json({ error: err?.message || "Failed to read the job status." });
+  }
 });
 
 // ─── Background Extraction (remove subject, keep background) ─

@@ -715,6 +715,7 @@ const DOWNLOAD_HOST_ALLOW = [
   "ibyteimg.com",
   "akamaized.net",
   "pinimg.com", // pinterest (i.pinimg.com images, v1.pinimg.com video/HLS)
+  "fal.media", // topaz upscale/interpolate results (v3.fal.media)
 ];
 
 /**
