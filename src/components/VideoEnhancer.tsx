@@ -72,6 +72,16 @@ const FPS_CHOICES = [
  */
 const ASSUMED_SOURCE_FPS = 30;
 
+/**
+ * Topaz refuses H.264 output above 4096px on either edge — a 4x pass on a
+ * 1080x1920 reel lands at 4320x7680 and comes back rejected. H.265 has no such
+ * ceiling but won't play in Chrome, so the trade is the user's to make.
+ */
+const H264_MAX_EDGE = 4096;
+
+/** Gaia 2 is the one model Topaz restricts to a single factor. */
+const GAIA2_FACTOR = 2;
+
 interface SourceMeta {
   name: string;
   durationSec: number;
@@ -127,6 +137,14 @@ export default function VideoEnhancer() {
   useEffect(() => {
     if (isUpscaling && targetFps > 60) setTargetFps(60);
   }, [isUpscaling, targetFps, setTargetFps]);
+
+  // Gaia 2 only ever upscales 2x; Fal takes the job and only refuses it minutes
+  // later, so don't let the combination be selected in the first place.
+  useEffect(() => {
+    if (upscaleFactor > 1 && upscaleModel === 'Gaia 2' && upscaleFactor !== GAIA2_FACTOR) {
+      setUpscaleFactor(GAIA2_FACTOR);
+    }
+  }, [upscaleModel, upscaleFactor, setUpscaleFactor]);
 
   // Keep the model valid for whichever endpoint the current settings imply.
   useEffect(() => {
@@ -239,6 +257,18 @@ export default function VideoEnhancer() {
   // ── Estimate ──────────────────────────────────────────
   const outW = meta?.width ? Math.round(meta.width * upscaleFactor) : 0;
   const outH = meta?.height ? Math.round(meta.height * upscaleFactor) : 0;
+
+  /** Why this factor can't be used, or null. Drives the disabled pills. */
+  const factorBlocked = (f: number): string | null => {
+    if (f <= 1) return null;
+    if (upscaleModel === 'Gaia 2' && f !== GAIA2_FACTOR) return 'Gaia 2 is 2x only';
+    return null;
+  };
+
+  // H.264's size ceiling isn't a dead end — switching the codec fixes it — so
+  // it blocks the render with an offered way out rather than greying the pill.
+  const h264TooBig =
+    h264 && isUpscaling && Math.max(outW, outH) > H264_MAX_EDGE;
 
   const estimate = (): number | null => {
     if (!meta?.durationSec) return null;
@@ -551,16 +581,19 @@ export default function VideoEnhancer() {
                   )}
                 </div>
                 <div className="grid grid-cols-4 gap-2">
-                  {UPSCALE_FACTORS.map((f) => (
-                    <Pill
-                      key={f.v}
-                      active={upscaleFactor === f.v}
-                      onClick={() => setUpscaleFactor(f.v)}
-                      label={f.label}
-                      sub={f.sub}
-                      disabled={running}
-                    />
-                  ))}
+                  {UPSCALE_FACTORS.map((f) => {
+                    const blocked = factorBlocked(f.v);
+                    return (
+                      <Pill
+                        key={f.v}
+                        active={upscaleFactor === f.v}
+                        onClick={() => setUpscaleFactor(f.v)}
+                        label={f.label}
+                        sub={blocked || f.sub}
+                        disabled={running || !!blocked}
+                      />
+                    );
+                  })}
                 </div>
               </div>
 
@@ -629,6 +662,18 @@ export default function VideoEnhancer() {
                     <span className="text-amber-300/90 flex items-center gap-1">
                       <AlertTriangle size={11} /> Pick an upscale factor or a frame rate.
                     </span>
+                  ) : h264TooBig ? (
+                    <span className="text-amber-300/90 flex items-center gap-1 flex-wrap">
+                      <AlertTriangle size={11} />
+                      {outW}&times;{outH} is past H.264&rsquo;s {H264_MAX_EDGE}px limit.
+                      <button
+                        onClick={() => setH264(false)}
+                        className="underline underline-offset-2 hover:text-amber-200"
+                      >
+                        Switch to H.265
+                      </button>
+                      <span className="text-zinc-600">or drop the factor.</span>
+                    </span>
                   ) : cost != null ? (
                     <>
                       <span className="text-zinc-300">&asymp; ${cost.toFixed(2)}</span> for this render
@@ -640,7 +685,7 @@ export default function VideoEnhancer() {
                 </div>
                 <button
                   onClick={() => void handleEnhance()}
-                  disabled={running || nothingToDo || uploadPct !== null}
+                  disabled={running || nothingToDo || h264TooBig || uploadPct !== null}
                   className="mt-4 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-purple-500 text-white text-sm font-medium shadow-[0_0_10px_rgba(168,85,247,0.2)] disabled:opacity-40 disabled:cursor-not-allowed transition-all whitespace-nowrap"
                 >
                   {running ? 'Rendering…' : 'Enhance video'}

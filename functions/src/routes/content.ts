@@ -273,6 +273,12 @@ router.post("/enhance-video", async (req, res) => {
     const allowed: readonly string[] = factor > 1 ? UPSCALE_MODELS : INTERPOLATE_MODELS;
     const chosen = typeof model === "string" && allowed.includes(model) ? model : allowed[0];
 
+    // Topaz only runs Gaia 2 at 2x. Fal queues the job regardless and refuses
+    // it minutes later, so fail here instead of spending the wait.
+    if (chosen === "Gaia 2" && factor !== 2) {
+      return res.status(400).json({ error: "Gaia 2 only upscales 2x. Pick 2x or a different model." });
+    }
+
     const { requestId, endpoint } = await submitEnhance({
       videoUrl,
       upscaleFactor: factor,

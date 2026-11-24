@@ -66,6 +66,36 @@ function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
 
+/**
+ * Turn a Fal error into something a person can act on.
+ *
+ * Fal's queue accepts anything on submit and only validates when a worker
+ * picks the job up, so a bad field surfaces much later — as a ValidationError
+ * whose `message` is the bare HTTP reason ("Unprocessable Entity") with the
+ * actual complaint in `body.detail`. Showing the message alone tells the user
+ * nothing about which setting Topaz refused.
+ */
+function falErrorMessage(err: unknown, fallback: string): string {
+  const detail = (err as { body?: { detail?: unknown } })?.body?.detail;
+  if (Array.isArray(detail) && detail.length) {
+    const parts = detail
+      .map((d) => {
+        const info = d as { loc?: unknown[]; msg?: string };
+        const field = Array.isArray(info.loc) ? String(info.loc[info.loc.length - 1] ?? "") : "";
+        const msg = String(info.msg ?? "").trim();
+        if (!msg) return "";
+        return field ? `${field}: ${msg}` : msg;
+      })
+      .filter(Boolean);
+    if (parts.length) return `Topaz rejected these settings — ${parts.join("; ")}.`;
+  }
+  if (typeof detail === "string" && detail.trim()) {
+    return `Topaz rejected this render — ${detail.trim()}`;
+  }
+  const msg = String((err as { message?: string })?.message ?? "").trim();
+  return msg && !/^unprocessable entity$/i.test(msg) ? msg : fallback;
+}
+
 export interface EnhanceVideoOptions {
   /** Publicly fetchable URL — Fal pulls the file itself, we never relay it. */
   videoUrl: string;
@@ -141,11 +171,14 @@ export async function submitEnhance(
     }
     if (status === 422) {
       throw new Error(
-        `Fal rejected those settings. Check the video URL is publicly reachable and the ` +
-          `model matches the job (${endpoint}).`,
+        falErrorMessage(
+          err,
+          "Fal rejected those settings. Check the video URL is publicly reachable and " +
+            `the model matches the job (${endpoint}).`,
+        ),
       );
     }
-    throw err;
+    throw new Error(falErrorMessage(err, "Couldn't queue the render at Fal."));
   }
 }
 
@@ -166,14 +199,16 @@ export async function enhanceStatus(
 ): Promise<EnhanceStatus> {
   ensureConfigured();
 
-  const status = (await fal.queue.status(endpoint, {
-    requestId,
-    logs: true,
-  })) as {
+  let status: {
     status: string;
     queue_position?: number;
     logs?: { message?: string }[];
   };
+  try {
+    status = (await fal.queue.status(endpoint, { requestId, logs: true })) as typeof status;
+  } catch (err) {
+    throw new Error(falErrorMessage(err, "Couldn't read the render's status at Fal."));
+  }
 
   const logs = (status.logs ?? [])
     .map((l) => String(l?.message ?? "").trim())
@@ -189,9 +224,16 @@ export async function enhanceStatus(
     };
   }
 
-  const { data } = (await fal.queue.result(endpoint, { requestId })) as {
-    data?: { video?: { url?: string } };
-  };
+  // A job that failed validation still reports COMPLETED here — the refusal
+  // only comes back when we ask for the result.
+  let data: { video?: { url?: string } } | undefined;
+  try {
+    ({ data } = (await fal.queue.result(endpoint, { requestId })) as {
+      data?: { video?: { url?: string } };
+    });
+  } catch (err) {
+    throw new Error(falErrorMessage(err, "The render failed at Topaz. Try different settings."));
+  }
   const videoUrl = data?.video?.url ?? null;
   if (!videoUrl) {
     throw new Error("Topaz finished but returned no video. Try again with a different model.");
