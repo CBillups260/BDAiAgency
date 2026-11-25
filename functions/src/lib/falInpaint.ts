@@ -57,6 +57,9 @@ const MODELS: Record<string, InpaintModel> = {
   "seedream-5-pro": { key: "seedream-5-pro", endpoint: "bytedance/seedream/v5/pro/edit", kind: "composite", refs: "optional", maxEdge: 4096 },
 };
 
+/** Endpoints whose input schema declares `seed`. */
+const SEEDED = new Set(["flux-pro-fill", "ideogram-v3-edit", "kontext-inpaint", "qwen-inpaint", "bria-genfill"]);
+
 export const INPAINT_MODEL_KEYS = Object.keys(MODELS);
 
 let configured = false;
@@ -148,6 +151,36 @@ async function highlightImage(image: Buffer, maskPng: Buffer, width: number, hei
  * Paste `result` over `original` through the mask, feathered by `feather` px.
  * Output is the original's exact dimensions.
  */
+/**
+ * The model's output at the original's size with no transparency left in it.
+ * GPT Image returns RGBA; anything it leaves see-through is filled from the
+ * original rather than dropped — removeAlpha() alone would turn it black.
+ */
+async function solidResult(original: Buffer, result: Buffer, width: number, height: number): Promise<Buffer> {
+  const resized = await sharp(result).resize(width, height, { fit: "fill" }).ensureAlpha().png().toBuffer();
+  const base = await sharp(original).resize(width, height, { fit: "fill" }).removeAlpha().png().toBuffer();
+  return sharp(base).composite([{ input: resized }]).removeAlpha().png().toBuffer();
+}
+
+/**
+ * Share of the painted area that came back black or see-through. A model's
+ * safety filter answers with an all-black frame, and once that is pasted back
+ * through the mask it reads as a black hole in the image.
+ */
+async function blankShare(img: Buffer, maskPng: Buffer, width: number, height: number): Promise<number> {
+  const px = await sharp(img).resize(width, height, { fit: "fill" }).ensureAlpha().raw().toBuffer();
+  const m = await sharp(maskPng).resize(width, height, { fit: "fill" }).greyscale().raw().toBuffer();
+  let n = 0;
+  let blank = 0;
+  for (let i = 0; i < width * height; i++) {
+    if (m[i] < 128) continue;
+    n++;
+    const o = i * 4;
+    if (px[o + 3] < 30 || px[o] + px[o + 1] + px[o + 2] < 36) blank++;
+  }
+  return n ? blank / n : 0;
+}
+
 async function compositeThroughMask(
   original: Buffer,
   result: Buffer,
@@ -162,7 +195,7 @@ async function compositeThroughMask(
   // Two passes on purpose: sharp runs a pipeline in its own fixed order, and
   // removeAlpha() lands AFTER joinChannel() — in one chain it strips the mask
   // we just attached and the whole result pastes over the original opaque.
-  const rgb = await sharp(result).resize(width, height, { fit: "fill" }).removeAlpha().png().toBuffer();
+  const rgb = await solidResult(original, result, width, height);
   const top = await sharp(rgb)
     .joinChannel(alphaRaw, { raw: { width, height, channels: 1 } })
     .png()
@@ -308,30 +341,56 @@ export async function inpaint(opts: InpaintOptions): Promise<{ base64: string; m
     }
   }
 
-  let data: unknown;
-  try {
-    ({ data } = await fal.subscribe(m.endpoint, { input } as never));
-  } catch (err) {
-    const status = (err as { status?: number })?.status;
-    if (status === 404) throw new Error(`That in-paint model isn't available on Fal right now (${m.endpoint}).`);
-    throw new Error(falErrorMessage(err, "The in-paint request failed. Try a different model."));
-  }
+  // The painted area in the original, for telling a black result from a
+  // legitimately dark one (a black can, a night sky).
+  const originalBlank = await blankShare(original, fullMask, W, H);
 
-  const d = data as { images?: { url?: string }[]; image?: { url?: string } };
-  const url = d?.images?.[0]?.url ?? d?.image?.url;
-  if (!url) throw new Error("The model returned no image. Try again or pick a different model.");
-  let resultBuf: Buffer;
-  if (url.startsWith("data:")) {
-    resultBuf = Buffer.from(url.slice(url.indexOf(",") + 1), "base64");
-  } else {
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Couldn't fetch the edited image (${resp.status}).`);
-    resultBuf = Buffer.from(await resp.arrayBuffer());
+  const callOnce = async (): Promise<{ buf: Buffer; flagged: boolean }> => {
+    let data: unknown;
+    try {
+      ({ data } = await fal.subscribe(m.endpoint, { input } as never));
+    } catch (err) {
+      const status = (err as { status?: number })?.status;
+      if (status === 404) throw new Error(`That in-paint model isn't available on Fal right now (${m.endpoint}).`);
+      throw new Error(falErrorMessage(err, "The in-paint request failed. Try a different model."));
+    }
+    const d = data as { images?: { url?: string }[]; image?: { url?: string }; has_nsfw_concepts?: boolean[] };
+    const url = d?.images?.[0]?.url ?? d?.image?.url;
+    if (!url) throw new Error("The model returned no image. Try again or pick a different model.");
+    let buf: Buffer;
+    if (url.startsWith("data:")) {
+      buf = Buffer.from(url.slice(url.indexOf(",") + 1), "base64");
+    } else {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`Couldn't fetch the edited image (${resp.status}).`);
+      buf = Buffer.from(await resp.arrayBuffer());
+    }
+    const flagged = Array.isArray(d?.has_nsfw_concepts) && d.has_nsfw_concepts.some(Boolean);
+    return { buf, flagged };
+  };
+
+  // One automatic retry: filter misfires and empty fills are usually one-offs.
+  let resultBuf: Buffer | null = null;
+  let lastFlagged = false;
+  for (let attempt = 0; attempt < 2 && !resultBuf; attempt++) {
+    // Models whose schema has a seed get a fresh one; the rest re-roll anyway.
+    if (attempt > 0 && SEEDED.has(m.key)) input.seed = Math.floor(Math.random() * 2 ** 31);
+    const { buf, flagged } = await callOnce();
+    const blank = await blankShare(buf, fullMask, W, H);
+    lastFlagged = flagged;
+    if (!flagged && !(blank > 0.8 && originalBlank < 0.4)) resultBuf = buf;
+  }
+  if (!resultBuf) {
+    throw new Error(
+      lastFlagged
+        ? `${m.endpoint.split("/").slice(-2).join(" ")} blacked out the painted area — its safety filter flagged the image (often a false alarm on alcohol, skin or text). Try GPT Image 2.6 or Bria GenFill.`
+        : `The model came back with an empty (black) area twice. Try a different model, or paint a little wider so it has more of the image to work from.`,
+    );
   }
 
   const out = protect
     ? await compositeThroughMask(original, resultBuf, fullMask, W, H, feather)
-    : await sharp(resultBuf).resize(W, H, { fit: "fill" }).png().toBuffer();
+    : await solidResult(original, resultBuf, W, H);
 
   return { base64: out.toString("base64"), mimeType: "image/png", model: m.key };
 }

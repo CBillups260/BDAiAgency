@@ -165,6 +165,9 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
   const drawing = useRef<{ last?: [number, number]; start?: [number, number]; subtract?: boolean } | null>(null);
   const [shapePreview, setShapePreview] = useState<{ rect?: [number, number, number, number]; lasso?: [number, number][]; subtract?: boolean } | null>(null);
   const lassoPts = useRef<[number, number][]>([]);
+  // Set when painting starts on a result: that result becomes the working image
+  // mid-gesture, and the reset below must not wipe the stroke being drawn.
+  const keepMaskRef = useRef(false);
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const [displayScale, setDisplayScale] = useState(1); // canvas px per CSS px
 
@@ -192,6 +195,11 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
   useEffect(() => {
     const c = canvasRef.current;
     if (!c || !maskDims) return;
+    if (keepMaskRef.current && c.width === maskDims.w && c.height === maskDims.h) {
+      keepMaskRef.current = false;
+      return;
+    }
+    keepMaskRef.current = false;
     c.width = maskDims.w;
     c.height = maskDims.h;
     undoRef.current = [];
@@ -307,9 +315,20 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (viewing || e.button > 0) return;
+    if (e.button > 0) return;
     const x = ctx();
     if (!x) return;
+    // Painting on a result = touch it up: it becomes the image being edited and
+    // the new mask starts empty, so only the spot painted now gets redone.
+    if (viewed) {
+      const c = canvasRef.current!;
+      x.clearRect(0, 0, c.width, c.height);
+      undoRef.current = [];
+      redoRef.current = [];
+      keepMaskRef.current = true;
+      continueFrom(viewed.image!);
+      setComparing(false);
+    }
     e.currentTarget.setPointerCapture(e.pointerId);
     const p = toCanvas(e);
     const subtract = tool === 'eraser' || e.altKey;
@@ -606,8 +625,7 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
               style={{
                 opacity: showMask && !viewing ? 0.5 : 0,
                 touchAction: 'none',
-                cursor: viewing ? 'default' : tool === 'brush' || tool === 'eraser' ? 'none' : 'crosshair',
-                pointerEvents: viewing ? 'none' : 'auto',
+                cursor: tool === 'brush' || tool === 'eraser' ? 'none' : 'crosshair',
               }}
             />
             {shapePreview && maskDims && (
@@ -639,7 +657,7 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
                 )}
               </svg>
             )}
-            {cursor && !viewing && (tool === 'brush' || tool === 'eraser') && (
+            {cursor && (tool === 'brush' || tool === 'eraser') && (
               <div
                 className="absolute pointer-events-none rounded-full border border-white mix-blend-difference"
                 style={{ left: cursor.x - brush / 2, top: cursor.y - brush / 2, width: brush, height: brush }}
@@ -668,13 +686,16 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
               <button
                 onClick={() => continueFrom(viewed.image!)}
                 className="px-2.5 py-1.5 rounded-lg bg-purple-600/80 hover:bg-purple-600 text-white flex items-center gap-1"
-                title="Make this the image you're editing, so you can paint the next change on top"
+                title="Edit this result instead of the original — paint just the spot that needs fixing and run again"
               >
-                <Layers size={12} /> Continue editing from this
+                <Layers size={12} /> Touch up this result
               </button>
               <button onClick={() => setViewing(null)} className="px-2.5 py-1.5 rounded-lg hover:bg-white/5 text-zinc-300">
                 Back to mask
               </button>
+              <span className="basis-full text-zinc-500">
+                Something off in one spot? Just paint over it here &mdash; the rest of this result is kept and only that spot is redone.
+              </span>
             </>
           ) : (
             <span>
