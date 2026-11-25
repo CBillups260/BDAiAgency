@@ -22,6 +22,8 @@ const LONG_RUNNING_PATHS = [
   "/api/content/classify-references",
   // Invisible (SynthID) removal proxies to a GPU diffusion service (10–40s).
   "/api/content/remove-watermark",
+  // In Paint — GPT Image edits at high quality run 60–120s.
+  "/api/content/inpaint",
   // Reel/video download streams the full MP4 back through the function.
   "/api/social/download",
   // Server-side ffmpeg branding — downloads, re-encodes, and returns an MP4.

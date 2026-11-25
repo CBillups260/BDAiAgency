@@ -9,6 +9,7 @@ import {
   SynthIDServiceError,
 } from "../lib/synthidService.js";
 import { generateFalImage, isFalModel } from "../lib/falImage.js";
+import { inpaint } from "../lib/falInpaint.js";
 import {
   submitEnhance,
   enhanceStatus,
@@ -225,6 +226,37 @@ router.post("/remove-watermark", async (req, res) => {
 // is actually configured.
 router.get("/remove-watermark/capabilities", (_req, res) => {
   res.json({ invisibleAvailable: isInvisibleRemovalConfigured() });
+});
+
+// ─── In Paint (masked editing via Fal) ─────────────────────────────
+//
+// One edit per request: the client fires one call per variant so results
+// stream in as they finish and no single response carries several 4K PNGs
+// (Cloud Functions caps a response at 32MB). See functions/src/lib/falInpaint.ts.
+
+router.post("/inpaint", async (req, res) => {
+  try {
+    const b = req.body ?? {};
+    if (!b.image?.base64) return res.status(400).json({ error: "An image is required." });
+    if (!b.mask?.base64) return res.status(400).json({ error: "Paint a mask over the area to change." });
+    const out = await inpaint({
+      model: String(b.model ?? ""),
+      prompt: String(b.prompt ?? ""),
+      image: b.image,
+      mask: b.mask,
+      references: Array.isArray(b.references) ? b.references : [],
+      expand: b.expand,
+      feather: b.feather,
+      protect: b.protect,
+      strength: b.strength,
+      quality: b.quality,
+      eraseQuality: b.eraseQuality,
+    });
+    res.json({ images: [{ base64: out.base64, mimeType: out.mimeType }], model: out.model });
+  } catch (err: any) {
+    console.error("In-paint error:", err?.message || err);
+    res.status(400).json({ error: err?.message || "In-paint failed." });
+  }
 });
 
 // ─── Video Enhancer (Topaz upscale + frame interpolation via Fal) ─

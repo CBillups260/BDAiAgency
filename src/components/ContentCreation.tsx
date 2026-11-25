@@ -29,6 +29,7 @@ import Composer from './Composer';
 import RemixCreator from './RemixCreator';
 import ReelExtractor from './ReelExtractor';
 import WatermarkRemover from './WatermarkRemover';
+import InpaintStudio from './InpaintEditor';
 import VideoEnhancer from './VideoEnhancer';
 import QuoteGenerator from './QuoteGenerator';
 import SubjectIsolator from './SubjectIsolator';
@@ -94,8 +95,8 @@ const COLOR_PALETTE = [
   { hex: '#C4B5A0', name: 'Tan' },
 ] as const;
 
-type ContentSubTab = 'captions' | 'post-creator' | 'quote-generator' | 'isolator' | 'review-graphics' | 'asset-creator' | 'resizer' | 'composer' | 'remix' | 'reel-extractor' | 'video-enhancer' | 'watermark-remover' | 'ai-scheduler';
-const VALID_CONTENT_SUB_TABS: ContentSubTab[] = ['captions', 'post-creator', 'quote-generator', 'isolator', 'review-graphics', 'asset-creator', 'resizer', 'composer', 'remix', 'reel-extractor', 'video-enhancer', 'watermark-remover', 'ai-scheduler'];
+type ContentSubTab = 'captions' | 'post-creator' | 'quote-generator' | 'isolator' | 'review-graphics' | 'asset-creator' | 'resizer' | 'composer' | 'inpaint' | 'remix' | 'reel-extractor' | 'video-enhancer' | 'watermark-remover' | 'ai-scheduler';
+const VALID_CONTENT_SUB_TABS: ContentSubTab[] = ['captions', 'post-creator', 'quote-generator', 'isolator', 'review-graphics', 'asset-creator', 'resizer', 'composer', 'inpaint', 'remix', 'reel-extractor', 'video-enhancer', 'watermark-remover', 'ai-scheduler'];
 
 export default function ContentCreation() {
   const navigate = useNavigate();
@@ -248,7 +249,7 @@ export default function ContentCreation() {
       {/* Sub-tabs */}
       <div className="-mx-4 sm:mx-0 mb-6 sm:mb-8 overflow-x-auto scrollbar-hide snap-x-tabs">
         <div className="flex items-center gap-1 bg-[#12121A] border border-[#27273A] rounded-xl p-1 w-max mx-4 sm:mx-0 sm:w-fit">
-          {([['captions', 'Caption Generator'], ['post-creator', 'Post Creator'], ['quote-generator', 'Quote Generator'], ['isolator', 'BG Extractor'], ['review-graphics', 'Review Graphics'], ['asset-creator', 'Products/Food/Graphics'], ['resizer', 'Resizer'], ['composer', 'Composer'], ['remix', 'Remix'], ['reel-extractor', 'Reel Extractor'], ['video-enhancer', 'Upscale & FPS'], ['watermark-remover', 'Watermark Remover'], ['ai-scheduler', 'AI Scheduler']] as const).map(([id, label]) => (
+          {([['captions', 'Caption Generator'], ['post-creator', 'Post Creator'], ['quote-generator', 'Quote Generator'], ['isolator', 'BG Extractor'], ['review-graphics', 'Review Graphics'], ['asset-creator', 'Products/Food/Graphics'], ['resizer', 'Resizer'], ['composer', 'Composer'], ['inpaint', 'In Paint'], ['remix', 'Remix'], ['reel-extractor', 'Reel Extractor'], ['video-enhancer', 'Upscale & FPS'], ['watermark-remover', 'Watermark Remover'], ['ai-scheduler', 'AI Scheduler']] as const).map(([id, label]) => (
             <button
               key={id}
               onClick={() => setContentSubTab(id)}
@@ -264,7 +265,7 @@ export default function ContentCreation() {
         </div>
       </div>
 
-      {contentSubTab === 'captions' ? <CaptionGenerator /> : contentSubTab === 'ai-scheduler' ? <GhlSchedulePanel /> : contentSubTab === 'quote-generator' ? <QuoteGenerator /> : contentSubTab === 'isolator' ? <SubjectIsolator /> : contentSubTab === 'review-graphics' ? <ReviewGraphicGenerator /> : contentSubTab === 'asset-creator' ? <AssetCreator /> : contentSubTab === 'resizer' ? <Resizer /> : contentSubTab === 'composer' ? <Composer /> : contentSubTab === 'remix' ? <RemixCreator /> : contentSubTab === 'reel-extractor' ? <ReelExtractor /> : contentSubTab === 'video-enhancer' ? <VideoEnhancer /> : contentSubTab === 'watermark-remover' ? <WatermarkRemover /> : (
+      {contentSubTab === 'captions' ? <CaptionGenerator /> : contentSubTab === 'ai-scheduler' ? <GhlSchedulePanel /> : contentSubTab === 'quote-generator' ? <QuoteGenerator /> : contentSubTab === 'isolator' ? <SubjectIsolator /> : contentSubTab === 'review-graphics' ? <ReviewGraphicGenerator /> : contentSubTab === 'asset-creator' ? <AssetCreator /> : contentSubTab === 'resizer' ? <Resizer /> : contentSubTab === 'composer' ? <Composer /> : contentSubTab === 'inpaint' ? <InpaintStudio /> : contentSubTab === 'remix' ? <RemixCreator /> : contentSubTab === 'reel-extractor' ? <ReelExtractor /> : contentSubTab === 'video-enhancer' ? <VideoEnhancer /> : contentSubTab === 'watermark-remover' ? <WatermarkRemover /> : (
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
         {/* Caption Widget */}
         <CaptionWidget

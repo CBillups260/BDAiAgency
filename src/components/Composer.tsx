@@ -1,7 +1,8 @@
 import { authedFetch } from '../lib/api';
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Upload, Loader, Plus, Download, Trash2, X, AtSign, Zap, Star, Check } from '@geist-ui/icons';
+import { Upload, Loader, Plus, Download, Trash2, X, AtSign, Zap, Star, Check, Edit3 } from '@geist-ui/icons';
 import PushToSchedulerButton from './PushToSchedulerButton';
+import { InpaintModal } from './InpaintEditor';
 import InspirationWidget from './InspirationWidget';
 import ModelPicker from './ModelPicker';
 import { modelName, getModel, PROVIDER_MAP, supportsQuality, qualityOptions, isOpenAIModel, supportsReasoningEffort, REASONING_EFFORT_OPTIONS } from '../lib/modelCatalog';
@@ -292,6 +293,8 @@ export default function Composer() {
   const [addingBrandRef, setAddingBrandRef] = useState<string | null>(null);
   // Asset timestamps currently being cleaned by the watermark remover.
   const [cleaningAssets, setCleaningAssets] = useState<Record<number, boolean>>({});
+  // Asset open in the In Paint editor (and the tab it belongs to).
+  const [inpainting, setInpainting] = useState<{ tabId: string; asset: GeneratedAsset } | null>(null);
   // Model picker (Freepik-style catalog browser) + recently-used models.
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [recentModels, setRecentModels] = usePersistedState<string[]>('composer.recentModels.v1', []);
@@ -1454,6 +1457,24 @@ ${tab.quickAdjust.trim()}`;
 
   return (
     <div className="space-y-5 max-w-6xl">
+      {inpainting && (
+        <InpaintModal
+          image={{ base64: inpainting.asset.base64, mimeType: inpainting.asset.mimeType }}
+          onClose={() => setInpainting(null)}
+          addLabel="Add to this Composer tab"
+          onAdd={(img) => {
+            const tabId = inpainting.tabId;
+            updateTab(tabId, (t) => ({
+              ...t,
+              // Our server re-encodes through sharp, so there is no AI metadata to strip.
+              assets: [
+                ...t.assets,
+                { base64: img.base64, mimeType: img.mimeType, timestamp: Date.now(), metaStripped: true },
+              ],
+            }));
+          }}
+        />
+      )}
       {/* Brand */}
       <div className="bg-[#12121A] border border-[#27273A] rounded-2xl p-5">
         <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-3">Select Brand</h3>
@@ -2148,6 +2169,13 @@ ${tab.quickAdjust.trim()}`;
                                 compact
                                 label="Push to AI Scheduler"
                               />
+                              <button
+                                onClick={() => setInpainting({ tabId: tab.id, asset })}
+                                className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                                title="In Paint — paint over part of the image and change just that"
+                              >
+                                <Edit3 size={14} />
+                              </button>
                               <button
                                 onClick={() => cleanAsset(tab.id, asset)}
                                 disabled={cleaningAssets[asset.timestamp]}
