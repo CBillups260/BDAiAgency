@@ -6,7 +6,15 @@ import sharp from "sharp";
  *
  * Three kinds of model sit behind one call:
  *
- *   native     — the endpoint takes a real mask (GPT Image edit, FLUX Fill,
+ *   markup     — GPT Image. Its edit endpoint does take `mask_url`, but the
+ *                masked pixels are erased before the model sees them, so it
+ *                redraws the area blind — and told to "keep everything else",
+ *                it often keeps the hole and returns it empty (that was the
+ *                black-oval bug: 4/4 failures on a small label edit). Instead
+ *                we send the real image plus a `markup_image_url` overlay
+ *                tinting the area red, then paste back through the mask —
+ *                2/2 clean, and it can build on the existing art.
+ *   native     — the endpoint takes a real mask (FLUX Fill,
  *                Ideogram v3 Edit, Qwen/Kontext inpaint, Bria GenFill).
  *                Z-Image Turbo inpaint exists too but is left out: in testing it
  *                ignored the surrounding scene and pasted a flat patch.
@@ -25,7 +33,7 @@ import sharp from "sharp";
  * Mask convention everywhere: white = change, black = keep.
  */
 
-export type InpaintKind = "native" | "erase" | "composite";
+export type InpaintKind = "native" | "markup" | "erase" | "composite";
 
 interface InpaintModel {
   key: string;
@@ -42,9 +50,9 @@ interface InpaintModel {
 }
 
 const MODELS: Record<string, InpaintModel> = {
-  "gpt-image-2.6-sunburst": { key: "gpt-image-2.6-sunburst", endpoint: "openai/gpt-image-2.6/sunburst/edit", kind: "native", refs: "optional", maxEdge: 3840, pixelWindow: [655_360, 8_294_400] },
-  "gpt-image-2.6-flare": { key: "gpt-image-2.6-flare", endpoint: "openai/gpt-image-2.6/flare/edit", kind: "native", refs: "optional", maxEdge: 3840, pixelWindow: [655_360, 8_294_400] },
-  "gpt-image-2.5-flare": { key: "gpt-image-2.5-flare", endpoint: "openai/gpt-image-2.5/flare/edit", kind: "native", refs: "optional", maxEdge: 3840, pixelWindow: [655_360, 8_294_400] },
+  "gpt-image-2.6-sunburst": { key: "gpt-image-2.6-sunburst", endpoint: "openai/gpt-image-2.6/sunburst/edit", kind: "markup", refs: "optional", maxEdge: 3840, pixelWindow: [655_360, 8_294_400] },
+  "gpt-image-2.6-flare": { key: "gpt-image-2.6-flare", endpoint: "openai/gpt-image-2.6/flare/edit", kind: "markup", refs: "optional", maxEdge: 3840, pixelWindow: [655_360, 8_294_400] },
+  "gpt-image-2.5-flare": { key: "gpt-image-2.5-flare", endpoint: "openai/gpt-image-2.5/flare/edit", kind: "markup", refs: "optional", maxEdge: 3840, pixelWindow: [655_360, 8_294_400] },
   "flux-pro-fill": { key: "flux-pro-fill", endpoint: "fal-ai/flux-pro/v1/fill", kind: "native", refs: "none", maxEdge: 2048 },
   "ideogram-v3-edit": { key: "ideogram-v3-edit", endpoint: "fal-ai/ideogram/v3/edit", kind: "native", refs: "none", maxEdge: 2048 },
   "kontext-inpaint": { key: "kontext-inpaint", endpoint: "fal-ai/flux-kontext-lora/inpaint", kind: "native", refs: "required", strength: true, maxEdge: 2048 },
@@ -92,8 +100,13 @@ function falErrorMessage(err: unknown, fallback: string): string {
 }
 
 /** Working size for the model: within its edge cap and (for OpenAI) pixel window. */
-function workSize(w: number, h: number, m: InpaintModel): { width: number; height: number } {
-  let s = Math.min(1, m.maxEdge / Math.max(w, h));
+function workSize(w: number, h: number, m: InpaintModel, zoomTo?: number): { width: number; height: number } {
+  // Normally only ever shrink. When zoomed into a small region, scale it UP to
+  // the model's working size (capped at 6x — past that the source pixels are
+  // too few for extra resolution to mean anything).
+  let s = zoomTo
+    ? Math.min(6, Math.min(m.maxEdge, zoomTo) / Math.max(w, h))
+    : Math.min(1, m.maxEdge / Math.max(w, h));
   if (m.pixelWindow) {
     const [lo, hi] = m.pixelWindow;
     const area = w * h * s * s;
@@ -128,12 +141,63 @@ async function prepareMask(mask: Buffer, width: number, height: number, expand: 
   return img.png().toBuffer();
 }
 
+/** Bounding box of the painted pixels, or null if nothing is painted. */
+async function maskBBox(maskPng: Buffer): Promise<{ left: number; top: number; width: number; height: number } | null> {
+  const { data, info } = await sharp(maskPng).greyscale().raw().toBuffer({ resolveWithObject: true });
+  let x0 = info.width, y0 = info.height, x1 = -1, y1 = -1;
+  for (let y = 0; y < info.height; y++) {
+    const row = y * info.width * info.channels;
+    for (let x = 0; x < info.width; x++) {
+      if (data[row + x * info.channels] > 127) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  }
+  return x1 < 0 ? null : { left: x0, top: y0, width: x1 - x0 + 1, height: y1 - y0 + 1 };
+}
+
+/**
+ * "Focus" region for a small edit, the way Photoshop's Generative Fill works:
+ * the painted area plus a ring of surrounding context, so the model spends its
+ * whole resolution on the spot being changed instead of the full frame. A
+ * 200px patch of a 2000px photo is ~1% of what the model sees otherwise, and
+ * fine detail (linework, small marks, lettering) comes back as mush.
+ */
+function focusRegion(
+  bb: { left: number; top: number; width: number; height: number },
+  W: number,
+  H: number,
+): { left: number; top: number; width: number; height: number } | null {
+  // Only worth it when the edit is a small part of the frame.
+  if (bb.width * bb.height > 0.3 * W * H) return null;
+  const pad = Math.max(96, Math.round(0.6 * Math.max(bb.width, bb.height)));
+  const left = Math.max(0, bb.left - pad);
+  const top = Math.max(0, bb.top - pad);
+  const right = Math.min(W, bb.left + bb.width + pad);
+  const bottom = Math.min(H, bb.top + bb.height + pad);
+  const region = { left, top, width: right - left, height: bottom - top };
+  // If the padded box ends up most of the image anyway, just use the image.
+  return region.width * region.height > 0.7 * W * H ? null : region;
+}
+
 /** Has the user actually painted anything? */
 async function maskCoverage(maskPng: Buffer): Promise<number> {
   const { data, info } = await sharp(maskPng).greyscale().raw().toBuffer({ resolveWithObject: true });
   let on = 0;
   for (let i = 0; i < data.length; i += info.channels) if (data[i] > 127) on++;
   return on / (info.width * info.height);
+}
+
+/** Transparent PNG with a translucent red fill over the mask — GPT Image's markup input. */
+async function markupOverlay(maskPng: Buffer, width: number, height: number): Promise<Buffer> {
+  const alpha = await sharp(maskPng).resize(width, height, { fit: "fill" }).greyscale().linear(110 / 255, 0).raw().toBuffer();
+  return sharp({ create: { width, height, channels: 3, background: { r: 255, g: 0, b: 0 } } })
+    .joinChannel(alpha, { raw: { width, height, channels: 1 } })
+    .png()
+    .toBuffer();
 }
 
 /** Red tint over the masked region — how composite models are told where to edit. */
@@ -181,6 +245,37 @@ async function blankShare(img: Buffer, maskPng: Buffer, width: number, height: n
   return n ? blank / n : 0;
 }
 
+/**
+ * Pull the result's colour toward the original along the seam. Models drift
+ * brightness/white balance slightly when they redraw, which shows as a faint
+ * band where the edit meets untouched pixels. We compare both images in a
+ * ring just inside the mask edge and apply the per-channel gain that lines
+ * them up — clamped to ±15%, so a deliberate colour change (red → blue) isn't
+ * dragged back.
+ */
+async function colorMatch(original: Buffer, result: Buffer, maskPng: Buffer, width: number, height: number): Promise<Buffer> {
+  const [o, r, soft] = await Promise.all([
+    sharp(original).removeAlpha().raw().toBuffer(),
+    sharp(result).removeAlpha().raw().toBuffer(),
+    sharp(maskPng).resize(width, height, { fit: "fill" }).greyscale().blur(6).raw().toBuffer(),
+  ]);
+  const so = [0, 0, 0];
+  const sr = [0, 0, 0];
+  let n = 0;
+  for (let i = 0; i < width * height; i++) {
+    const v = soft[i];
+    if (v < 140 || v > 230) continue; // the inner edge ring only
+    n++;
+    for (let c = 0; c < 3; c++) {
+      so[c] += o[i * 3 + c];
+      sr[c] += r[i * 3 + c];
+    }
+  }
+  if (n < 50) return result;
+  const gain = so.map((v, c) => Math.min(1.15, Math.max(0.85, (v + 1) / (sr[c] + 1))));
+  return sharp(result).linear(gain, [0, 0, 0]).png().toBuffer();
+}
+
 async function compositeThroughMask(
   original: Buffer,
   result: Buffer,
@@ -195,7 +290,7 @@ async function compositeThroughMask(
   // Two passes on purpose: sharp runs a pipeline in its own fixed order, and
   // removeAlpha() lands AFTER joinChannel() — in one chain it strips the mask
   // we just attached and the whole result pastes over the original opaque.
-  const rgb = await solidResult(original, result, width, height);
+  const rgb = await colorMatch(original, await solidResult(original, result, width, height), maskPng, width, height);
   const top = await sharp(rgb)
     .joinChannel(alphaRaw, { raw: { width, height, channels: 1 } })
     .png()
@@ -227,9 +322,13 @@ export interface InpaintOptions {
   quality?: string;
   /** Object-removal quality tier. */
   eraseQuality?: string;
+  /** Zoom into the painted area for small edits (default on). */
+  focus?: boolean;
 }
 
-export async function inpaint(opts: InpaintOptions): Promise<{ base64: string; mimeType: string; model: string }> {
+export async function inpaint(
+  opts: InpaintOptions,
+): Promise<{ base64: string; mimeType: string; model: string; focused: boolean }> {
   ensureConfigured();
   const m = MODELS[opts.model];
   if (!m) throw new Error(`Unknown in-paint model "${opts.model}".`);
@@ -250,16 +349,26 @@ export async function inpaint(opts: InpaintOptions): Promise<{ base64: string; m
 
   const expand = Math.max(0, Math.min(64, Math.round(Number(opts.expand ?? 0))));
   const feather = Math.max(0, Math.min(64, Math.round(Number(opts.feather ?? 8))));
-  const protect = opts.protect !== false || m.kind === "composite";
+  // Paste-back is how markup/composite models are kept inside the mask at all.
+  const protect = opts.protect !== false || m.kind === "composite" || m.kind === "markup";
 
   const fullMask = await prepareMask(Buffer.from(opts.mask.base64, "base64"), W, H, expand);
   const coverage = await maskCoverage(fullMask);
   if (coverage < 0.0005) throw new Error("Paint over the area you want to change first.");
   if (coverage > 0.985) throw new Error("The mask covers the whole image — that's a regenerate, not an in-paint. Leave some of the original unpainted.");
 
-  const { width, height } = workSize(W, H, m);
-  const workImage = await sharp(original).resize(width, height, { fit: "fill" }).removeAlpha().png().toBuffer();
-  const workMask = await sharp(fullMask).resize(width, height, { fit: "fill" }).threshold(128).png().toBuffer();
+  // Everything below works on `src` — the whole image, or the focus region
+  // around a small edit, which is pasted back at `region` at the end.
+  const bb = opts.focus === false ? null : await maskBBox(fullMask);
+  const region = bb ? focusRegion(bb, W, H) : null;
+  const RW = region?.width ?? W;
+  const RH = region?.height ?? H;
+  const srcImg = region ? await sharp(original).extract(region).png().toBuffer() : original;
+  const srcMask = region ? await sharp(fullMask).extract(region).png().toBuffer() : fullMask;
+
+  const { width, height } = workSize(RW, RH, m, region ? 1536 : undefined);
+  const workImage = await sharp(srcImg).resize(width, height, { fit: "fill", kernel: "lanczos3" }).removeAlpha().png().toBuffer();
+  const workMask = await sharp(srcMask).resize(width, height, { fit: "fill" }).threshold(128).png().toBuffer();
 
   const [imageUrl, maskUrl] = await Promise.all([upload(workImage), upload(workMask)]);
   const refUrls = await Promise.all(refs.slice(0, 8).map((r) => upload(Buffer.from(r.base64, "base64"), r.mimeType || "image/png")));
@@ -272,12 +381,18 @@ export async function inpaint(opts: InpaintOptions): Promise<{ base64: string; m
     case "gpt-image-2.6-flare":
     case "gpt-image-2.5-flare": {
       const q = ["low", "medium", "high", "xhigh", "max"].includes(String(opts.quality)) ? opts.quality : "high";
+      const markupUrl = await upload(await markupOverlay(workMask, width, height));
       input = {
-        prompt,
+        prompt:
+          `${prompt}\n\nOnly change the area tinted red in the markup; leave the rest of the image as it is. ` +
+          `The red tint is only a marker and must not appear in the output.` +
+          (refUrls.length ? ` Use the other image(s) as the reference for what to put there.` : ""),
         image_urls: [imageUrl, ...refUrls],
-        mask_url: maskUrl,
+        markup_image_url: markupUrl,
         image_size: { width, height },
         quality: q,
+        // Never "auto" — left to choose, it has returned transparent patches.
+        background: "opaque",
         output_format: "png",
         num_images: 1,
         ...(m.key.startsWith("gpt-image-2.6") ? { reasoning_effort: "high" } : {}),
@@ -343,7 +458,7 @@ export async function inpaint(opts: InpaintOptions): Promise<{ base64: string; m
 
   // The painted area in the original, for telling a black result from a
   // legitimately dark one (a black can, a night sky).
-  const originalBlank = await blankShare(original, fullMask, W, H);
+  const originalBlank = await blankShare(srcImg, srcMask, RW, RH);
 
   const callOnce = async (): Promise<{ buf: Buffer; flagged: boolean }> => {
     let data: unknown;
@@ -376,9 +491,17 @@ export async function inpaint(opts: InpaintOptions): Promise<{ base64: string; m
     // Models whose schema has a seed get a fresh one; the rest re-roll anyway.
     if (attempt > 0 && SEEDED.has(m.key)) input.seed = Math.floor(Math.random() * 2 ** 31);
     const { buf, flagged } = await callOnce();
-    const blank = await blankShare(buf, fullMask, W, H);
+    const blank = await blankShare(buf, srcMask, RW, RH);
     lastFlagged = flagged;
-    if (!flagged && !(blank > 0.8 && originalBlank < 0.4)) resultBuf = buf;
+    if (!flagged && !(blank > 0.8 && originalBlank < 0.4)) {
+      resultBuf = buf;
+    } else {
+      const meta = await sharp(buf).metadata();
+      console.warn(
+        `[inpaint] ${m.key} attempt ${attempt + 1} rejected — blank ${(blank * 100).toFixed(0)}% of painted area, ` +
+          `flagged=${flagged}, ${meta.width}x${meta.height} alpha=${meta.hasAlpha}`,
+      );
+    }
   }
   if (!resultBuf) {
     throw new Error(
@@ -388,9 +511,15 @@ export async function inpaint(opts: InpaintOptions): Promise<{ base64: string; m
     );
   }
 
-  const out = protect
-    ? await compositeThroughMask(original, resultBuf, fullMask, W, H, feather)
-    : await solidResult(original, resultBuf, W, H);
+  const patch = protect
+    ? await compositeThroughMask(srcImg, resultBuf, srcMask, RW, RH, feather)
+    : await solidResult(srcImg, resultBuf, RW, RH);
+  const out = region
+    ? await sharp(await sharp(original).removeAlpha().png().toBuffer())
+        .composite([{ input: patch, left: region.left, top: region.top }])
+        .png()
+        .toBuffer()
+    : patch;
 
-  return { base64: out.toString("base64"), mimeType: "image/png", model: m.key };
+  return { base64: out.toString("base64"), mimeType: "image/png", model: m.key, focused: !!region };
 }

@@ -56,8 +56,8 @@ interface InpaintModelInfo {
 // Mirrors MODELS in functions/src/lib/falInpaint.ts. Blurbs come from side-by-side
 // test renders, not marketing copy.
 const MODELS: InpaintModelInfo[] = [
-  { key: 'gpt-image-2.6-flare', name: 'GPT Image 2.6 Flare', mode: 'fill', refs: 'optional', gpt: true, price: '$$', blurb: 'Best all-rounder. Matches the scene’s light and perspective; handles text. Takes reference images.' },
-  { key: 'gpt-image-2.6-sunburst', name: 'GPT Image 2.6 Sunburst', mode: 'fill', refs: 'optional', gpt: true, price: '$$$', blurb: 'The top OpenAI tier — for hero shots where the detail has to hold up at full size.' },
+  { key: 'gpt-image-2.6-flare', name: 'GPT Image 2.6 Flare', mode: 'fill', refs: 'optional', gpt: true, price: '$$', blurb: 'Best all-rounder. Sees the art under your paint and builds on it — ideal for adding small details. Takes reference images.' },
+  { key: 'gpt-image-2.6-sunburst', name: 'GPT Image 2.6 Sunburst', mode: 'fill', refs: 'optional', gpt: true, price: '$$$', blurb: 'The top OpenAI tier. Closest match to a reference in testing — for hero shots where detail has to hold up.' },
   { key: 'gpt-image-2.5-flare', name: 'GPT Image 2.5 Flare', mode: 'fill', refs: 'optional', gpt: true, price: '$$', blurb: 'Previous OpenAI generation. Use if 2.6 refuses or drifts on a specific image.' },
   { key: 'ideogram-v3-edit', name: 'Ideogram v3 Edit', mode: 'fill', refs: 'none', price: '$0.09', blurb: 'Cleanest object swaps when the mask covers the whole object. Strong at signage and lettering.' },
   { key: 'flux-pro-fill', name: 'FLUX.1 Pro Fill', mode: 'fill', refs: 'none', price: '$0.05/MP', blurb: 'Photoreal fill that keeps the original object’s shape — good for retexturing and recolouring.' },
@@ -146,6 +146,7 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
   const [eraseTier, setEraseTier] = usePersistedState<string>('inpaint.eraseTier', 'best_quality');
   const [count, setCount] = usePersistedState<number>('inpaint.count', 2);
   const [brush, setBrush] = usePersistedState<number>('inpaint.brush', 48);
+  const [focus, setFocus] = usePersistedState<boolean>('inpaint.focus', true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [refs, setRefs] = useState<Img[]>([]);
 
@@ -170,6 +171,10 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
   const keepMaskRef = useRef(false);
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const [displayScale, setDisplayScale] = useState(1); // canvas px per CSS px
+  const [displaySize, setDisplaySize] = useState({ w: 0, h: 0 });
+  // Painted area's bounding box (canvas px) — anchors the floating prompt.
+  const [maskBox, setMaskBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [bubbleOpen, setBubbleOpen] = useState(false);
 
   // Results
   const [variants, setVariants] = useState<Variant[]>([]);
@@ -215,7 +220,10 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
     if (!c) return;
     const update = () => {
       const r = c.getBoundingClientRect();
-      if (r.width) setDisplayScale(c.width / r.width);
+      if (r.width) {
+        setDisplayScale(c.width / r.width);
+        setDisplaySize({ w: r.width, h: r.height });
+      }
     };
     update();
     const ro = new ResizeObserver(update);
@@ -230,14 +238,22 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
     const x = ctx();
     if (!c || !x) return;
     const d = x.getImageData(0, 0, c.width, c.height).data;
-    let any = false;
-    for (let i = 3; i < d.length; i += 16) {
-      if (d[i] > 0) {
-        any = true;
-        break;
+    let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+    for (let y = 0; y < c.height; y += 2) {
+      const row = y * c.width * 4;
+      for (let xx = 0; xx < c.width; xx += 2) {
+        if (d[row + xx * 4 + 3] > 0) {
+          if (xx < x0) x0 = xx;
+          if (xx > x1) x1 = xx;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
+        }
       }
     }
+    const any = x1 >= 0;
     setHasMask(any);
+    setMaskBox(any ? { x0, y0, x1, y1 } : null);
+    if (!any) setBubbleOpen(false);
   }, []);
 
   const snapshot = () => {
@@ -282,6 +298,8 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
     snapshot();
     x.clearRect(0, 0, c.width, c.height);
     setHasMask(false);
+    setMaskBox(null);
+    setBubbleOpen(false);
   };
 
   const invertMask = () => {
@@ -316,6 +334,7 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.button > 0) return;
+    setBubbleOpen(false);
     const x = ctx();
     if (!x) return;
     // Painting on a result = touch it up: it becomes the image being edited and
@@ -411,6 +430,7 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
     }
     setShapePreview(null);
     refreshHasMask();
+    setBubbleOpen(true);
   };
 
   // Keyboard: B/E/R/L tools, [ ] brush size, ⌘Z / ⇧⌘Z, X invert, M toggle mask.
@@ -475,6 +495,7 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
     if (blocker || running) return;
     const mask = exportMask();
     if (!mask) return;
+    setBubbleOpen(false);
     const n = Math.max(1, Math.min(4, count));
     const batch: Variant[] = Array.from({ length: n }, () => ({
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -496,6 +517,7 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
       strength,
       quality,
       eraseQuality: eraseTier,
+      focus,
     });
     await Promise.all(
       batch.map(async (v) => {
@@ -663,6 +685,73 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
                 style={{ left: cursor.x - brush / 2, top: cursor.y - brush / 2, width: brush, height: brush }}
               />
             )}
+            {bubbleOpen && !viewed && hasMask && maskBox && displaySize.w > 0 && (() => {
+              // Canva / Generative-Fill style prompt, pinned under the selection
+              // (or above it when there's no room), kept inside the image.
+              const bw = Math.min(320, displaySize.w);
+              const bh = mode === 'fill' ? 118 : 60;
+              const cx = (maskBox.x0 + maskBox.x1) / 2 / displayScale;
+              const below = maskBox.y1 / displayScale + 10;
+              const above = maskBox.y0 / displayScale - bh - 10;
+              const top = below + bh <= displaySize.h ? below : above >= 0 ? above : Math.max(0, displaySize.h - bh);
+              const left = Math.min(Math.max(0, cx - bw / 2), displaySize.w - bw);
+              return (
+                <div
+                  className="absolute z-20 rounded-xl bg-[#12121A]/95 border border-purple-500/50 shadow-2xl p-2 backdrop-blur"
+                  style={{ left, top, width: bw }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  {mode === 'fill' ? (
+                    <textarea
+                      autoFocus={!prompt}
+                      rows={2}
+                      value={prompt}
+                      onChange={(e) => setPrompt(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          run();
+                        } else if (e.key === 'Escape') {
+                          setBubbleOpen(false);
+                        }
+                      }}
+                      placeholder="What should change here?"
+                      className="w-full bg-[#0A0A0F] border border-[#27273A] rounded-lg px-2 py-1.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-purple-500/60 resize-none"
+                    />
+                  ) : (
+                    <p className="text-xs text-zinc-300 px-1 py-1">Remove what you painted and rebuild what&rsquo;s behind it.</p>
+                  )}
+                  <div className="flex items-center gap-1 mt-1.5">
+                    {model.refs !== 'none' && (
+                      <label
+                        className={`flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] cursor-pointer whitespace-nowrap ${refs.length ? 'bg-sky-500/15 text-sky-300' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
+                        title="Attach a reference image — a close-up of the detail you want, a product shot, a logo"
+                      >
+                        <ImageIcon size={11} />
+                        {refs.length ? `${refs.length} ref` : model.refs === 'required' ? 'Add ref (required)' : 'Reference'}
+                        <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { addRef(e.target.files); e.target.value = ''; }} />
+                      </label>
+                    )}
+                    <span className="text-[10px] text-zinc-600 truncate flex-1" title="Change the model in the side panel">
+                      {model.name}
+                    </span>
+                    <button onClick={() => setBubbleOpen(false)} className="p-1 rounded-md text-zinc-500 hover:text-white" title="Hide (Esc)">
+                      <X size={11} />
+                    </button>
+                    <button
+                      onClick={run}
+                      disabled={!!blocker || running}
+                      title={blocker ?? undefined}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-gradient-to-r from-purple-600 to-purple-500 text-white text-[11px] font-medium disabled:opacity-40 whitespace-nowrap"
+                    >
+                      <Zap size={11} />
+                      {mode === 'fill' ? 'Generate' : 'Remove'}
+                      {count > 1 ? ` ×${count}` : ''}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
             {viewed && (
               <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/60 text-[10px] text-white">
                 {comparing ? 'Before' : 'After'}
@@ -934,19 +1023,29 @@ export function InpaintEditor({ image, onAdd, addLabel = 'Add' }: InpaintEditorP
                   onChange={(v) => setStrength(v / 100)}
                 />
               )}
-              <label className={`flex items-start gap-2 text-xs ${model.composite ? 'opacity-60' : ''}`}>
+              <label className="flex items-start gap-2 text-xs">
+                <input type="checkbox" checked={focus} onChange={(e) => setFocus(e.target.checked)} className="mt-0.5 accent-purple-500" />
+                <span>
+                  <span className="text-zinc-200">Zoom into the painted area</span>
+                  <span className="block text-[10px] text-zinc-500">
+                    For small edits the model works on a close-up of your selection at full resolution, like
+                    Photoshop&rsquo;s Generative Fill &mdash; much finer detail. Turn off for edits that need the whole picture as context.
+                  </span>
+                </span>
+              </label>
+              <label className={`flex items-start gap-2 text-xs ${model.composite || model.gpt ? 'opacity-60' : ''}`}>
                 <input
                   type="checkbox"
-                  checked={protect || !!model.composite}
-                  disabled={!!model.composite}
+                  checked={protect || !!model.composite || !!model.gpt}
+                  disabled={!!model.composite || !!model.gpt}
                   onChange={(e) => setProtect(e.target.checked)}
                   className="mt-0.5 accent-purple-500"
                 />
                 <span>
                   <span className="text-zinc-200">Lock everything outside the mask</span>
                   <span className="block text-[10px] text-zinc-500">
-                    {model.composite
-                      ? 'Always on for paste-back models — it’s how they’re kept inside the mask.'
+                    {model.composite || model.gpt
+                      ? 'Always on for this model — it’s how its edit is kept inside the mask.'
                       : 'Models redraw the whole frame and drift colours and detail. This pastes only the painted area back onto your original.'}
                   </span>
                 </span>

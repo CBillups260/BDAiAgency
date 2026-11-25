@@ -251,8 +251,9 @@ router.post("/inpaint", async (req, res) => {
       strength: b.strength,
       quality: b.quality,
       eraseQuality: b.eraseQuality,
+      focus: b.focus,
     });
-    res.json({ images: [{ base64: out.base64, mimeType: out.mimeType }], model: out.model });
+    res.json({ images: [{ base64: out.base64, mimeType: out.mimeType }], model: out.model, focused: out.focused });
   } catch (err: any) {
     console.error("In-paint error:", err?.message || err);
     res.status(400).json({ error: err?.message || "In-paint failed." });
